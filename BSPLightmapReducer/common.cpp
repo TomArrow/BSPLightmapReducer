@@ -2598,3 +2598,233 @@ void FS_WriteFile(const char* qpath, const void* buffer, int size) {
 
 
 
+
+
+void generateTransformationMatrixRow(vec3_t vec1i, vec3_t vec2i, vec3_t vec3i, float resultValue1, float resultValue2, float resultValue3, vec3_t transformVec) {
+
+	transformVec[0] = (vec2i[2] * vec3i[1] * resultValue1 - vec2i[1] * vec3i[2] * resultValue1 - vec1i[2] * vec3i[1] * resultValue2 + vec1i[1] * vec3i[2] * resultValue2 + vec1i[2] * vec2i[1] * resultValue3 - vec1i[1] * vec2i[2] * resultValue3) / (vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
+	transformVec[1] = (-vec2i[2] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[2] * resultValue1 + vec1i[2] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[2] * resultValue2 - vec1i[2] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[2] * resultValue3) / (vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
+	transformVec[2] = (-vec2i[1] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[1] * resultValue1 + vec1i[1] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[1] * resultValue2 - vec1i[1] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[1] * resultValue3) / (-vec1i[2] * vec2i[1] * vec3i[0] + vec1i[1] * vec2i[2] * vec3i[0] + vec1i[2] * vec2i[0] * vec3i[1] - vec1i[0] * vec2i[2] * vec3i[1] - vec1i[1] * vec2i[0] * vec3i[2] + vec1i[0] * vec2i[1] * vec3i[2]);
+
+}
+
+// Calculates matrix from 2 pairs of vectors that transforms the i vec3 ones to the o vec2 ones.
+void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t matrix[2]) {
+
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[0], vec2o[0], vec3o[0], matrix[0]);
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[1], vec2o[1], vec3o[1], matrix[1]);
+}
+void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t normal, float matrix[16]) {
+
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[0], vec2o[0], vec3o[0], &matrix[0]);
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[1], vec2o[1], vec3o[1], &matrix[4]);
+	VectorCopy(normal,&matrix[8]);
+}
+
+
+
+
+
+
+/*
+** Invert 4x4 matrix.
+** Contributed by David Moore (See Mesa bug #6748)
+*/
+// this function is from MESA source code. Relevant license note from the file:
+/*
+** License Applicability. Except to the extent portions of this file are
+** made subject to an alternative license as permitted in the SGI Free
+** Software License B, Version 1.1 (the "License"), the contents of this
+** file are subject only to the provisions of the License. You may not use
+** this file except in compliance with the License. You may obtain a copy
+** of the License at Silicon Graphics, Inc., attn: Legal Services, 1600
+** Amphitheatre Parkway, Mountain View, CA 94043-1351, or at:
+**
+** http://oss.sgi.com/projects/FreeB
+**
+** Note that, as provided in the License, the Software is distributed on an
+** "AS IS" basis, with ALL EXPRESS AND IMPLIED WARRANTIES AND CONDITIONS
+** DISCLAIMED, INCLUDING, WITHOUT LIMITATION, ANY IMPLIED WARRANTIES AND
+** CONDITIONS OF MERCHANTABILITY, SATISFACTORY QUALITY, FITNESS FOR A
+** PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+**
+** Original Code. The Original Code is: OpenGL Sample Implementation,
+** Version 1.2.1, released January 26, 2000, developed by Silicon Graphics,
+** Inc. The Original Code is Copyright (c) 1991-2000 Silicon Graphics, Inc.
+** Copyright in any portions created by third parties is as indicated
+** elsewhere herein. All Rights Reserved.
+**
+** Additional Notice Provisions: The application programming interfaces
+** established by SGI in conjunction with the Original Code are The
+** OpenGL(R) Graphics System: A Specification (Version 1.2.1), released
+** April 1, 1999; The OpenGL(R) Graphics System Utility Library (Version
+** 1.3), released November 4, 1998; and OpenGL(R) Graphics with the X
+** Window System(R) (Version 1.3), released October 19, 1998. This software
+** was created using the OpenGL(R) version 1.2.1 Sample Implementation
+** published by SGI, but has not been independently verified as being
+** compliant with the OpenGL(R) version 1.2.1 Specification.
+**
+** $Date: 2006/05/01 16:01:17 $ $Revision: 1.6 $
+** $Header: /home/krh/git/sync/mesa-cvs-repo/Mesa/src/glu/sgi/libutil/project.c,v 1.6 2006/05/01 16:01:17 brianp Exp $
+*/
+/*int __gluInvertMatrixd(const GLdouble m[16], GLdouble invOut[16])
+{
+    double inv[16], det;
+    int i;
+
+    inv[0] =   m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15]
+             + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    inv[4] =  -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15]
+             - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    inv[8] =   m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15]
+             + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14]
+             - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    inv[1] =  -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15]
+             - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    inv[5] =   m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15]
+             + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    inv[9] =  -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15]
+             - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    inv[13] =  m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14]
+             + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    inv[2] =   m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15]
+             + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+    inv[6] =  -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15]
+             - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+    inv[10] =  m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15]
+             + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14]
+             - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+    inv[3] =  -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11]
+             - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+    inv[7] =   m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11]
+             + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11]
+             - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+    inv[15] =  m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10]
+             + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+
+    det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+    if (det == 0)
+        return GL_FALSE;
+
+    det = 1.0 / det;
+
+    for (i = 0; i < 16; i++)
+        invOut[i] = inv[i] * det;
+
+    return GL_TRUE;
+}*/
+// copy but changed to f
+qboolean __gluInvertMatrixf(const float m[16], float invOut[16])
+{
+	float inv[16], det;
+    int i;
+
+    inv[0] =   m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15]
+             + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    inv[4] =  -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15]
+             - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    inv[8] =   m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15]
+             + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14]
+             - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    inv[1] =  -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15]
+             - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    inv[5] =   m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15]
+             + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    inv[9] =  -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15]
+             - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    inv[13] =  m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14]
+             + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    inv[2] =   m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15]
+             + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+    inv[6] =  -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15]
+             - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+    inv[10] =  m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15]
+             + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14]
+             - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+    inv[3] =  -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11]
+             - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+    inv[7] =   m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11]
+             + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11]
+             - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+    inv[15] =  m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10]
+             + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+
+    det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+    if (det == 0)
+        return qfalse;
+
+    det = 1.0 / det;
+
+    for (i = 0; i < 16; i++)
+        invOut[i] = inv[i] * det;
+
+    return qtrue;
+}
+
+qboolean __gluInvertMatrixfRowMajor(const float m[16], float invOut[16])
+{
+	float inv[16], det;
+    int i;
+	
+	//	0	1	2	3
+	//	4	5	6	7
+	//	8	9	10	11
+	//	12	13	14	15
+
+	//	0	4	8	12
+	//	1	5	9	13
+	//	2	6	10	14
+	//	3	7	11	15
+
+    inv[0] =   m[5]*m[10]*m[15] - m[5]*m[14]*m[11] - m[6]*m[9]*m[15]
+             + m[6]*m[13]*m[11] + m[7]*m[9]*m[14] - m[7]*m[13]*m[10];
+    inv[1] =  -m[1]*m[10]*m[15] + m[1]*m[14]*m[11] + m[2]*m[9]*m[15]
+             - m[2]*m[13]*m[11] - m[3]*m[9]*m[14] + m[3]*m[13]*m[10];
+    inv[2] =   m[1]*m[6]*m[15] - m[1]*m[14]*m[7] - m[2]*m[5]*m[15]
+             + m[2]*m[13]*m[7] + m[3]*m[5]*m[14] - m[3]*m[13]*m[6];
+    inv[3] = -m[1]*m[6]*m[11] + m[1]*m[10]*m[7] + m[2]*m[5]*m[11]
+             - m[2]*m[9]*m[7] - m[3]*m[5]*m[10] + m[3]*m[9]*m[6];
+    inv[4] =  -m[4]*m[10]*m[15] + m[4]*m[14]*m[11] + m[6]*m[8]*m[15]
+             - m[6]*m[12]*m[11] - m[7]*m[8]*m[14] + m[7]*m[12]*m[10];
+    inv[5] =   m[0]*m[10]*m[15] - m[0]*m[14]*m[11] - m[2]*m[8]*m[15]
+             + m[2]*m[12]*m[11] + m[3]*m[8]*m[14] - m[3]*m[12]*m[10];
+    inv[6] =  -m[0]*m[6]*m[15] + m[0]*m[14]*m[7] + m[2]*m[4]*m[15]
+             - m[2]*m[12]*m[7] - m[3]*m[4]*m[14] + m[3]*m[12]*m[6];
+    inv[7] =  m[0]*m[6]*m[11] - m[0]*m[10]*m[7] - m[2]*m[4]*m[11]
+             + m[2]*m[8]*m[7] + m[3]*m[4]*m[10] - m[3]*m[8]*m[6];
+    inv[8] =   m[4]*m[9]*m[15] - m[4]*m[13]*m[11] - m[5]*m[8]*m[15]
+             + m[5]*m[12]*m[11] + m[7]*m[8]*m[13] - m[7]*m[12]*m[9];
+    inv[9] =  -m[0]*m[9]*m[15] + m[0]*m[13]*m[11] + m[1]*m[8]*m[15]
+             - m[1]*m[12]*m[11] - m[3]*m[8]*m[13] + m[3]*m[12]*m[9];
+    inv[10] =  m[0]*m[5]*m[15] - m[0]*m[13]*m[7] - m[1]*m[4]*m[15]
+             + m[1]*m[12]*m[7] + m[3]*m[4]*m[13] - m[3]*m[12]*m[5];
+    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[9]*m[7] + m[1]*m[4]*m[11]
+             - m[1]*m[8]*m[7] - m[3]*m[4]*m[9] + m[3]*m[8]*m[5];
+    inv[12] =  -m[4]*m[9]*m[14] + m[4]*m[13]*m[10] + m[5]*m[8]*m[14]
+             - m[5]*m[12]*m[10] - m[6]*m[8]*m[13] + m[6]*m[12]*m[9];
+    inv[13] =   m[0]*m[9]*m[14] - m[0]*m[13]*m[10] - m[1]*m[8]*m[14]
+             + m[1]*m[12]*m[10] + m[2]*m[8]*m[13] - m[2]*m[12]*m[9];
+    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[13]*m[6] + m[1]*m[4]*m[14]
+             - m[1]*m[12]*m[6] - m[2]*m[4]*m[13] + m[2]*m[12]*m[5];
+    inv[15] =  m[0]*m[5]*m[10] - m[0]*m[9]*m[6] - m[1]*m[4]*m[10]
+             + m[1]*m[8]*m[6] + m[2]*m[4]*m[9] - m[2]*m[8]*m[5];
+
+    det = m[0]*inv[0] + m[4]*inv[1] + m[8]*inv[2] + m[12]*inv[3];
+    if (det == 0)
+        return qfalse;
+
+    det = 1.0 / det;
+
+    for (i = 0; i < 16; i++)
+        invOut[i] = inv[i] * det;
+
+    return qtrue;
+}
+
+
