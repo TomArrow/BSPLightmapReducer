@@ -1713,7 +1713,7 @@ void Com_Memcpy(void* dest, const void* src, const size_t count);
 void 		QDECL Com_Printf(const char* fmt, ...);
 void 		QDECL Com_DPrintf(const char* fmt, ...);
 void 		QDECL Com_Error(int code, const char* fmt, ...);
-
+char *COM_ParseExt(const char **data_p, qboolean allowLineBreaks);
 typedef enum {
 	ERR_FATAL,					// exit the entire game with a popup window
 	ERR_DROP,					// print to console and disconnect from game

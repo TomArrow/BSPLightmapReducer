@@ -134,6 +134,126 @@ void Com_Memset(void* dest, const int val, const size_t count)
 	memset(dest, val, count);
 }
 
+/*
+==============
+COM_Parse
+
+Parse a token out of a string
+Will never return NULL, just empty strings
+
+If "allowLineBreaks" is qtrue then an empty
+string will be returned if the next token is
+a newline.
+==============
+*/
+static	char	com_token[MAX_TOKEN_CHARS];
+static	char	com_parsename[MAX_TOKEN_CHARS];
+static	int		com_lines;
+
+const char* SkipWhitespace(const char* data, qboolean* hasNewLines) {
+	int c;
+
+	while ((c = *data) <= ' ') {
+		if (!c) {
+			return NULL;
+		}
+		if (c == '\n') {
+			com_lines++;
+			*hasNewLines = qtrue;
+		}
+		data++;
+	}
+
+	return data;
+}
+char *COM_ParseExt(const char **data_p, qboolean allowLineBreaks) {
+	int c = 0, len;
+	qboolean hasNewLines = qfalse;
+	const char *data;
+
+	data = *data_p;
+	len = 0;
+	com_token[0] = 0;
+
+	// make sure incoming data is valid
+	if (!data) {
+		*data_p = NULL;
+		return com_token;
+	}
+
+	while (1) {
+		// skip whitespace
+		data = SkipWhitespace(data, &hasNewLines);
+		if (!data) {
+			*data_p = NULL;
+			return com_token;
+		}
+		if (hasNewLines && !allowLineBreaks) {
+			*data_p = data;
+			return com_token;
+		}
+
+		c = *data;
+
+		// skip double slash comments
+		if (c == '/' && data[1] == '/') {
+			data += 2;
+			while (*data && *data != '\n') {
+				data++;
+			}
+		}
+		// skip /* */ comments
+		else if (c == '/' && data[1] == '*') {
+			data += 2;
+			while (*data && (*data != '*' || data[1] != '/')) {
+				data++;
+			}
+			if (*data) {
+				data += 2;
+			}
+		} else {
+			break;
+		}
+	}
+
+	// handle quoted strings
+	if (c == '\"') {
+		data++;
+		while (1) {
+			c = *data++;
+			if (c == '\"' || !c) {
+				com_token[len] = 0;
+				*data_p = (const char *)data;
+				return com_token;
+			}
+			if (len < MAX_TOKEN_CHARS) {
+				com_token[len] = c;
+				len++;
+			}
+		}
+	}
+
+	// parse a regular word
+	do {
+		if (len < MAX_TOKEN_CHARS) {
+			com_token[len] = c;
+			len++;
+		}
+		data++;
+		c = *data;
+		if (c == '\n')
+			com_lines++;
+	} while (c>32);
+
+	if (len == MAX_TOKEN_CHARS) {
+		//		Com_Printf ("Token exceeded %i chars, discarded.\n", MAX_TOKEN_CHARS);
+		len = 0;
+	}
+	com_token[len] = 0;
+
+	*data_p = (const char *)data;
+	return com_token;
+}
 
 
 int Q_vsnprintf(char* str, int capacity, size_t size, const char* format, va_list ap) {

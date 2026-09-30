@@ -111,6 +111,65 @@ typedef struct {
 	bmodel_t	bmodels[1];
 } world_t;
 
+
+void R_LoadEntities( lump_t *l, world_t* w, byte* fileBase ) {
+	const char *p;
+	char *token, *s;
+	char keyname[MAX_TOKEN_CHARS];
+	char value[MAX_TOKEN_CHARS];
+
+	w->lightGridSize[0] = 64;
+	w->lightGridSize[1] = 64;
+	w->lightGridSize[2] = 128;
+
+	p = (const char *)(fileBase + l->fileofs);
+
+	// store for reference by the cgame
+	char* entityString = (char *)calloc( l->filelen + 1, 1 );
+	Q_strncpyz(entityString, l->filelen + 1, p, l->filelen + 1);
+	//strcpy( entityString, p );
+	entityString[l->filelen] = '\0';
+	const char* entityParsePoint = (const char *) entityString;
+
+	token = COM_ParseExt( &p, qtrue );
+	if (!*token || *token != '{') {
+		return;
+	}
+	// only parse the world spawn
+	while ( 1 ) {
+		// parse key
+		token = COM_ParseExt( &p, qtrue );
+
+		if ( !*token || *token == '}' ) {
+			break;
+		}
+		Q_strncpyz(keyname, sizeof(keyname), token, sizeof(keyname));
+
+		// parse value
+		token = COM_ParseExt( &p, qtrue );
+
+		if ( !*token || *token == '}' ) {
+			break;
+		}
+		Q_strncpyz(value, sizeof(value), token, sizeof(value));
+
+		// check for a different grid size
+		if (!_stricmp(keyname, "gridsize")) {
+			vec3_t gridSize;
+
+			if ( sscanf(value, "%f %f %f", &gridSize[0], &gridSize[1], &gridSize[2]) != 3 ) {
+				Com_Printf( "WARNING: Malformed gridsize '%s'\n", value);
+			} else {
+				w->lightGridSize[0] = gridSize[0];
+				w->lightGridSize[1] = gridSize[1];
+				w->lightGridSize[2] = gridSize[2];
+			}
+			continue;
+		}
+
+	}
+}
+
 /*
 ================
 R_LoadLightGrid
@@ -602,6 +661,7 @@ int main(int argc, char** argv) {
 	int lmSize = (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
 	int numLightmaps, countOutputLightmaps;
 	byte* outputLightmaps;
+	byte* outputLightmapUsageInfo;
 	{
 		lump_t* l = &header->lumps[LUMP_LIGHTMAPS];
 		int len = l->filelen;
@@ -628,7 +688,7 @@ int main(int argc, char** argv) {
 		l = &header->lumps[LUMP_LIGHTMAPS];
 		buf = fileBase + l->fileofs;
 
-
+		outputLightmapUsageInfo = (byte*)calloc(lmbufsize, 1);
 		outputLightmaps = fileBase + inputFileLength;
 		memset(outputLightmaps, 0, lmbufsize);
 		for (int i = 0; i < numLightmaps; i++) {
@@ -710,6 +770,7 @@ int main(int argc, char** argv) {
 		lump_t* lm = &header->lumps[LUMP_MODELS];
 		lump_t* llG = &header->lumps[LUMP_LIGHTGRID];
 		lump_t* llA = &header->lumps[LUMP_LIGHTARRAY];
+		lump_t* lE = &header->lumps[LUMP_ENTITIES];
 		int len = l->filelen;
 		int lenV = lV->filelen;
 		int lenI = lI->filelen;
@@ -732,8 +793,10 @@ int main(int argc, char** argv) {
 		// get world bounds for lightgrid
 		for (int j = 0; j < 3; j++) {
 			world.bmodels[0].bounds[0][j] = submodelsAsArray->mins[j];
-			world.bmodels[0].bounds[1][j] = submodelsAsArray->mins[j];
+			world.bmodels[0].bounds[1][j] = submodelsAsArray->maxs[j];
 		}
+		R_InitFunctionTables();
+		R_LoadEntities(lE,&world,fileBase);
 		R_LoadLightGrid(llG, &world,fileBase);
 		R_LoadLightGridArray(llA, &world,fileBase);
 
@@ -742,6 +805,7 @@ int main(int argc, char** argv) {
 		int numSurfaces = len / sizeof(dsurface_t);
 
 		int tries = 0, missesXYZ = 0, missesST =0, missesXYZReal = 0, missesSTReal =0;
+		vec3_t pixelXYZ[128*128]{ 0 };
 		for (int i = 0; i < numSurfaces; i++) {
 			dsurface_t* surf = &surfAsArray[i];
 			dshader_t* shader = shadersAsArray + surf->shaderNum;
@@ -801,6 +865,8 @@ int main(int argc, char** argv) {
 					VectorCopy(fullSizeNormal, calcedNormal);
 					float triangleSize = 0.5f*VectorNormalize(calcedNormal);
 
+					byte triangleSizeSqrtIndicator = triangleSize == 0 ? 0 : 0.1f*sqrtf(triangleSize);
+
 					// barycentric matrix stuff
 					float triangleSizeyTimes2Squared = DotProduct(fullSizeNormal, fullSizeNormal);
 					vec3_t helper1, helper2;
@@ -848,9 +914,10 @@ int main(int argc, char** argv) {
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
 
 					bool good = true;
+
+					float planedist;
 					for (int j = 0; j < 3;j++) {
 						vec3_t st = { 0 }, stOriginal = { 0 };
-						float planedist;
 						vec3_t xyz, xyz2, xyzOriginal;
 						stOriginal[0] = vert[j]->lightmap[l][0];
 						stOriginal[1] = vert[j]->lightmap[l][1];
@@ -871,7 +938,7 @@ int main(int argc, char** argv) {
 
 						tries++;
 						float stdist = sqrtf((st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]));
-						float xyzdist = VectorDistance(xyz2,xyzOriginal);
+						float xyzdist = VectorDistance(xyz,xyzOriginal);
 						if (stdist > 0.2f) {
 							missesST++;
 							good = false;
@@ -899,8 +966,99 @@ int main(int argc, char** argv) {
 						uvMax[0] = std::max(std::max(vert[0]->lightmap[l][0], vert[1]->lightmap[l][0]), vert[2]->lightmap[l][0]);
 						uvMax[1] = std::max(std::max(vert[0]->lightmap[l][1], vert[1]->lightmap[l][1]), vert[2]->lightmap[l][1]);
 						vec2i_t lmMin, lmMax;
+						lmMin[0] = std::clamp(uvMin[0] * 128.0f, 0.0f, 128.0f-1.0f);
+						lmMin[1] = std::clamp(uvMin[1] * 128.0f, 0.0f, 128.0f-1.0f);
+						lmMax[0] = std::ceil(std::clamp(uvMax[0] * 128.0f, 0.0f, 128.0f-1.0f)) + 0.5f;
+						lmMax[1] = std::ceil(std::clamp(uvMax[1] * 128.0f, 0.0f, 128.0f-1.0f)) + 0.5f;
 
+						byte* lm = outputLightmapUsageInfo + lmSize * (lightmapNumOriginal + 1);
+						byte* lmReal = outputLightmaps + lmSize * (lightmapNumOriginal + 1);
+						for (int x = lmMin[0]; x < lmMax[0];x++) {
+							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+								vec3_t pixelUv;
+								vec3_t xyz, bary;
+								pixelUv[0] = ((float)x + 0.5f) / 128.0f;
+								pixelUv[1] = ((float)y + 0.5f) / 128.0f;
+								pixelUv[2] = planedist;
 
+								applyMatrix(pixelUv, uvTransformMatrixInverted, xyz);
+								VectorCopy(xyz, pixelXYZ[y * 128 + x]);
+								applyMatrix(xyz, baryCentricMatrix, bary);
+
+								if (bary[0] < 0.0 || bary[1] < 0.0 || bary[2] < 0.0) {
+									continue;
+								} 
+								lm[y * 128 * 3 + x * 3] = 255;
+							}
+						}
+						for (int x = lmMin[0]; x < lmMax[0]; x++) {
+							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+
+								for (int xx = std::max(x,0); xx < std::min(127,lmMax[0]+1); xx++) {
+									for (int yy = std::max(lmMin[1], 0); yy < std::min(127, lmMax[1]); yy++) {
+										if (lm[yy * 128 * 3 + xx * 3]) {
+											lm[y * 128 * 3 + x * 3 + 1] = 255;
+										}
+									}
+								}
+							}
+						}
+						for (int x = lmMin[0]; x < lmMax[0]; x++) {
+							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+								if (!lm[y * 128 * 3 + x * 3 + 1] || lm[y * 128 * 3 + x * 3 + 2] > triangleSizeSqrtIndicator) {
+									// pixel already written to by a bigger triangle (is that a good criterion?) or not inside triangle
+									continue;
+								}
+								vec3_t lightDir;
+								R_LightDirForPoint(pixelXYZ[y * 128 + x], lightDir, calcedNormal, NULL, &world, 0.2, 0.0 );
+								VectorNormalize(lightDir);
+
+								// as in netradiant custom
+								const vec3_t g_vector3_axis_x{ 1, 0, 0 };
+								const vec3_t g_vector3_axis_y{ 0, 1, 0 };
+								const vec3_t g_vector3_axis_z{ 0, 0, 1 };
+								vec3_t myTangent{ 0 }, myBinormal{ 0 };
+								if (calcedNormal[0] == 0 && calcedNormal[1] == 0.0f) {
+									if (calcedNormal[2] == 1.0f) {
+										VectorCopy(g_vector3_axis_x,myTangent);
+										VectorCopy(g_vector3_axis_y, myBinormal);
+									}
+									else if (calcedNormal[2] == -1.0f) {
+										VectorScale(g_vector3_axis_x,-1.0f, myTangent);
+										VectorCopy(g_vector3_axis_y, myBinormal);
+									}
+								}
+								else {
+									CrossProduct(calcedNormal, g_vector3_axis_z,myTangent);
+									VectorNormalize(myTangent);
+									CrossProduct(myTangent, calcedNormal, myBinormal);
+									VectorNormalize(myBinormal);
+								}
+
+								float somedot = DotProduct(myTangent, calcedNormal);
+								VectorMA(myTangent,-somedot,calcedNormal,myTangent);
+								somedot = DotProduct(myBinormal, calcedNormal);
+								VectorMA(myBinormal,-somedot,calcedNormal, myBinormal);
+
+								VectorNormalize(myTangent);
+								VectorNormalize(myBinormal);
+
+								if (calcedNormal[0] > 0 || calcedNormal[1] < 0 || calcedNormal[2] < 0) {
+									VectorNegate(myTangent, myTangent);
+								}
+
+								vec3_t surfaceLightDir = {
+									DotProduct(lightDir, myTangent),
+									DotProduct(lightDir, myBinormal),
+									DotProduct(lightDir, calcedNormal)
+								};
+
+								lmReal[y * 128 * 3 + x * 3 + 0] = std::clamp((surfaceLightDir[0]*0.5f+0.5f)*256.0f,0.0f,255.0f);
+								lmReal[y * 128 * 3 + x * 3 + 1] = std::clamp((surfaceLightDir[1]*0.5f+0.5f)*256.0f,0.0f,255.0f);
+								lmReal[y * 128 * 3 + x * 3 + 2] = std::clamp((surfaceLightDir[2]*0.5f+0.5f)*256.0f,0.0f,255.0f);
+								lm[y * 128 * 3 + x * 3 + 2] = triangleSizeSqrtIndicator;
+							}
+						}
 					}
 
 				}
