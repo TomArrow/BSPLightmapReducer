@@ -2,6 +2,7 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <sstream>
+#include <algorithm>
 
 
 // Code is 99%-100% from jomme, from various files.
@@ -2602,13 +2603,15 @@ void FS_WriteFile(const char* qpath, const void* buffer, int size) {
 
 
 
-
+inline float nonzero(float n) {
+	return n ? n : 0.001f;
+}
 
 void generateTransformationMatrixRow(vec3_t vec1i, vec3_t vec2i, vec3_t vec3i, float resultValue1, float resultValue2, float resultValue3, vec3_t transformVec) {
 
-	transformVec[0] = (vec2i[2] * vec3i[1] * resultValue1 - vec2i[1] * vec3i[2] * resultValue1 - vec1i[2] * vec3i[1] * resultValue2 + vec1i[1] * vec3i[2] * resultValue2 + vec1i[2] * vec2i[1] * resultValue3 - vec1i[1] * vec2i[2] * resultValue3) / (vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
-	transformVec[1] = (-vec2i[2] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[2] * resultValue1 + vec1i[2] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[2] * resultValue2 - vec1i[2] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[2] * resultValue3) / (vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
-	transformVec[2] = (-vec2i[1] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[1] * resultValue1 + vec1i[1] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[1] * resultValue2 - vec1i[1] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[1] * resultValue3) / (-vec1i[2] * vec2i[1] * vec3i[0] + vec1i[1] * vec2i[2] * vec3i[0] + vec1i[2] * vec2i[0] * vec3i[1] - vec1i[0] * vec2i[2] * vec3i[1] - vec1i[1] * vec2i[0] * vec3i[2] + vec1i[0] * vec2i[1] * vec3i[2]);
+	transformVec[0] = (vec2i[2] * vec3i[1] * resultValue1 - vec2i[1] * vec3i[2] * resultValue1 - vec1i[2] * vec3i[1] * resultValue2 + vec1i[1] * vec3i[2] * resultValue2 + vec1i[2] * vec2i[1] * resultValue3 - vec1i[1] * vec2i[2] * resultValue3) / nonzero(vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
+	transformVec[1] = (-vec2i[2] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[2] * resultValue1 + vec1i[2] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[2] * resultValue2 - vec1i[2] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[2] * resultValue3) / nonzero(vec1i[2] * vec2i[1] * vec3i[0] - vec1i[1] * vec2i[2] * vec3i[0] - vec1i[2] * vec2i[0] * vec3i[1] + vec1i[0] * vec2i[2] * vec3i[1] + vec1i[1] * vec2i[0] * vec3i[2] - vec1i[0] * vec2i[1] * vec3i[2]);
+	transformVec[2] = (-vec2i[1] * vec3i[0] * resultValue1 + vec2i[0] * vec3i[1] * resultValue1 + vec1i[1] * vec3i[0] * resultValue2 - vec1i[0] * vec3i[1] * resultValue2 - vec1i[1] * vec2i[0] * resultValue3 + vec1i[0] * vec2i[1] * resultValue3) / nonzero(-vec1i[2] * vec2i[1] * vec3i[0] + vec1i[1] * vec2i[2] * vec3i[0] + vec1i[2] * vec2i[0] * vec3i[1] - vec1i[0] * vec2i[2] * vec3i[1] - vec1i[1] * vec2i[0] * vec3i[2] + vec1i[0] * vec2i[1] * vec3i[2]);
 
 }
 

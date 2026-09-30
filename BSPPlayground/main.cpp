@@ -1,6 +1,6 @@
 #include "common.h"
-#define cimg_display 0
-#include "../ext/CImg.h"
+//#define cimg_display 0
+//#include "../ext/CImg.h"
 
 // project for just playing around and testing concepts
 
@@ -232,15 +232,15 @@ int main(int argc, char** argv) {
 					memcpy(uvTransformMatrixPseudoInverted, uvTransformMatrix, sizeof(uvTransformMatrixPseudoInverted));
 
 
-					cimg_library::CImg<float> A(4, 4);
-					for (int k = 0; k < 16; k++) {
-						A[k] = uvTransformMatrixPseudoInverted[k];
-					}
-					//cimg_library::CImg<float> pseudo_inv2= ((A * A.get_transpose()).invert()) * A.get_transpose();
-					cimg_library::CImg<float> pseudo_inv2= A.invert();
-					for (int k = 0; k < 16; k++) {
-						uvTransformMatrixPseudoInverted[k] = pseudo_inv2[k];
-					}
+					//cimg_library::CImg<float> A(4, 4);
+					//for (int k = 0; k < 16; k++) {
+					//	A[k] = uvTransformMatrixPseudoInverted[k];
+					//}
+					////cimg_library::CImg<float> pseudo_inv2= ((A * A.get_transpose()).invert()) * A.get_transpose();
+					//cimg_library::CImg<float> pseudo_inv2= A.invert();
+					//for (int k = 0; k < 16; k++) {
+					//	uvTransformMatrixPseudoInverted[k] = pseudo_inv2[k];
+					//}
 
 					//pinv(uvTransformMatrixPseudoInverted, 4, 4);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
 					for (int j = 0; j < 3;j++) {
 						vec3_t st = { 0 }, stOriginal = { 0 };
 						float planedist;
-						vec3_t xyz, xyzOriginal;
+						vec3_t xyz, xyz2, xyzOriginal;
 						stOriginal[0] = vert[j]->lightmap[l][0];
 						stOriginal[1] = vert[j]->lightmap[l][1];
 						st[0] = DotProduct(vert[j]->xyz,&uvTransformMatrix[0]);
@@ -262,13 +262,13 @@ int main(int argc, char** argv) {
 						xyz[1] = DotProduct(stOriginal, &uvTransformMatrixInverted[4]);
 						xyz[2] = DotProduct(stOriginal, &uvTransformMatrixInverted[8]);
 						
-						//xyz[0] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[0]);
-						//xyz[1] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[4]);
-						//xyz[2] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[8]);
+						xyz2[0] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[0]);
+						xyz2[1] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[4]);
+						xyz2[2] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[8]);
 
 						tries++;
 						float stdist = sqrtf((st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]));
-						float xyzdist = VectorDistance(xyz,xyzOriginal);
+						float xyzdist = VectorDistance(xyz2,xyzOriginal);
 						if (stdist > 0.2f) {
 							missesST++;
 							if (triangleSize >= 100.0) {
