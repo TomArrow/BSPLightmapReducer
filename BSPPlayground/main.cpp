@@ -990,6 +990,96 @@ int main(int argc, char** argv) {
 						int lmOffset = debugLD ? 0 : 1;
 						byte* lm = outputLightmapUsageInfo + lmSize * (lightmapNumOriginal + lmOffset);
 						byte* lmReal = outputLightmaps + lmSize * (lightmapNumOriginal + lmOffset);
+#define ACCURATE_CLIPPING 1
+#if ACCURATE_CLIPPING
+						for (int x = lmMin[0]; x <= lmMax[0]; x++) {
+							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
+								if (debugLD && !good && !lm[y * 128 * 3 + x * 3 + 2]) {
+									lmReal[y * 128 * 3 + x * 3 + 0] = 0;
+									lmReal[y * 128 * 3 + x * 3 + 1] = 0;
+									lmReal[y * 128 * 3 + x * 3 + 2] = triangleSizeSqrtIndicator;
+									continue;
+								}
+
+								vec3_t pixelUv;
+								vec3_t xyz, bary;
+								pixelUv[0] = ((float)x + 0.5f) / 128.0f;
+								pixelUv[1] = ((float)y + 0.5f) / 128.0f;
+								pixelUv[2] = planedist;
+
+								applyMatrix(pixelUv, uvTransformMatrixInverted, xyz);
+								VectorCopy(xyz, pixelXYZ[y * 128 + x]);
+								applyMatrix(xyz, baryCentricMatrix, bary);
+
+
+								bool insideTriangle = bary[0] >= 0.0 && bary[1] >= 0.0 && bary[2] >= 0.0;
+
+
+								const float uvHalfPixOffset = -0.5f / 128.0f;
+								const vec3_t cornerUvOffsets[4] = {
+									{-uvHalfPixOffset,-uvHalfPixOffset,0.0f},
+									{uvHalfPixOffset,-uvHalfPixOffset,0.0f},
+									{uvHalfPixOffset,uvHalfPixOffset,0.0f},
+									{-uvHalfPixOffset,uvHalfPixOffset,0.0f},
+								};
+								vec3_t tmp, tmp2;
+								vec3_t cornerBary[4];
+								if (!insideTriangle) {
+									// center not inside triangle. check the 4 corners of the pixel and save them
+									for (int corner = 0; corner < 4; corner++) {
+										VectorAdd(pixelUv, cornerUvOffsets[corner], tmp);
+										applyMatrix(tmp, uvTransformMatrixInverted, tmp2);
+										applyMatrix(tmp2, baryCentricMatrix, cornerBary[corner]);
+
+										if (cornerBary[corner][0] < 0.0 || cornerBary[corner][1] < 0.0 || cornerBary[corner][2] < 0.0) {
+											continue;
+										}
+										insideTriangle = true;
+									}
+								}
+
+								if (!insideTriangle) {
+									const int pixelBordersCorners[4][2] = {
+										{0,1},
+										{1,2},
+										{2,3},
+										{3,0},
+									};
+									// corners werent inside the triangle either. so check each pixel border
+									// for intersection with a barycentric edge, then lerp towards that edge and check if its
+									// inside the triangle.
+									// this will not cover the whole triangle being inside the pixel and off-center (fuck it who cares)
+									for (int border = 0; border < 4 && !insideTriangle; border++) {
+										vec_t* point1 = cornerBary[pixelBordersCorners[border][0]];
+										vec_t* point2 = cornerBary[pixelBordersCorners[border][1]];
+
+										for (int dim = 0; dim < 3; dim++) {
+											if (point1[dim] >= 0 != point2[dim] >= 0) {
+												float lerp = point1[dim] / (point1[dim] - point2[dim]);
+												vec3_t lerpBary;
+												VectorLerp(lerp,point1,point2,lerpBary);
+												if (point1[(dim+1)%3] >= 0 && point2[(dim + 1) % 3] >= 0) {
+													insideTriangle = true;
+													break;
+												}
+											}
+										}
+									}
+								}
+
+								if (!insideTriangle) {
+									continue;
+								}
+
+
+
+								lm[y * 128 * 3 + x * 3 + 1] = 255;
+							}
+						}
+						if (!good) {
+							break;
+						}
+#else
 						for (int x = lmMin[0]; x <= lmMax[0];x++) {
 							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
 								if (debugLD && !good && !lm[y * 128 * 3 + x * 3 + 2]) {
@@ -1030,6 +1120,7 @@ int main(int argc, char** argv) {
 								}
 							}
 						}
+#endif
 						for (int x = lmMin[0]; x <= lmMax[0]; x++) {
 							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
 								if (!lm[y * 128 * 3 + x * 3 + 1] || lm[y * 128 * 3 + x * 3 + 2] > triangleSizeSqrtIndicator) {
