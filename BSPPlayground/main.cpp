@@ -151,21 +151,28 @@ int main(int argc, char** argv) {
 	{
 		lump_t* l = &header->lumps[LUMP_SURFACES];
 		lump_t* lV = &header->lumps[LUMP_DRAWVERTS];
+		lump_t* lI = &header->lumps[LUMP_DRAWINDEXES];
 		int len = l->filelen;
 		int lenV = lV->filelen;
-		if (!len || !lenV) {
+		int lenI = lI->filelen;
+		if (!len || !lenV || !lenI) {
 			return 1;
 		}
 		byte* buf = fileBase + l->fileofs;
 		byte* bufV = fileBase + lV->fileofs;
+		byte* bufI = fileBase + lI->fileofs;
 		dsurface_t* surfAsArray = (dsurface_t*)buf;
 		mapVert_t* vertAsArray = (mapVert_t*)bufV;
+		int* indexesAsArray = (int*)bufI;
 
 		int numSurfaces = len / sizeof(dsurface_t);
 
-		int tries = 0, missesXYZ = 0, missesST =0;
+		int tries = 0, missesXYZ = 0, missesST =0, missesXYZReal = 0, missesSTReal =0;
 		for (int i = 0; i < numSurfaces; i++) {
 			dsurface_t* surf = &surfAsArray[i];
+			if (surf->surfaceType != MST_PLANAR) {
+				continue;
+			}
 			for (int l = 0; l < MAXLIGHTMAPS; l++) {
 				int lightmapNumOriginal = surf->lightmapNum[l];
 				if (lightmapNumOriginal < 0) continue;
@@ -184,27 +191,38 @@ int main(int argc, char** argv) {
 				//surf->lightmapWidth = surf->lightmapWidth / 2;
 				//surf->lightmapHeight = surf->lightmapHeight / 2;
 
-				for (int v = 0; v < surf->numVerts; v++) {
+				//for (int v = 0; v < surf->numVerts; v++) {
+				for (int idx = 0; idx < surf->numIndexes; idx++) {
 					//mapVert_t* vert = &vertAsArray[surf->firstVert + v];
 					//vert->lightmap[l][0] = targetXOffsetV + vert->lightmap[l][0] / 2.0f;
 					//vert->lightmap[l][1] = targetYOffsetV + vert->lightmap[l][1] / 2.0f;
-					if (((i + 1) % 3)) {
+					if (((idx + 1) % 3)) {
 						continue;
 					}
-
+					;
 					mapVert_t* vert[3] = {
-						&vertAsArray[surf->firstVert + v - 2],
-						&vertAsArray[surf->firstVert + v - 1],
-						&vertAsArray[surf->firstVert + v],
+						&vertAsArray[surf->firstVert + indexesAsArray[surf->firstIndex + idx - 2]],
+						&vertAsArray[surf->firstVert + indexesAsArray[surf->firstIndex + idx - 1]],
+						&vertAsArray[surf->firstVert + indexesAsArray[surf->firstIndex + idx]],
 					};
+
+					vec3_t calcedNormal;
+					vec3_t side1, side2;
+					VectorSubtract(vert[2]->xyz, vert[1]->xyz, side1);
+					VectorSubtract(vert[2]->xyz, vert[0]->xyz, side2);
+					CrossProduct(side1, side2, calcedNormal);
+					float triangleSize = 0.5f*VectorNormalize(calcedNormal);
 
 					float uvTransformMatrix[16] = { 0 };
 					float uvTransformMatrixInverted[16] = { 0 };
 					//vec3_t uvTransformMatrix[2];
 					//uvTransformMatrix[3] = uvTransformMatrix[7] = uvTransformMatrix[11] = uvTransformMatrix[15] = 1.0f;
 					uvTransformMatrix[15] = 1.0f;
-					makeUVTransformationMatrix(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l],vert[0]->normal, uvTransformMatrix);
+					makeUVTransformationMatrix(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l], calcedNormal, uvTransformMatrix);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
+
+
+
 					for (int j = 0; j < 3;j++) {
 						vec3_t st = { 0 }, stOriginal = { 0 };
 						float planedist;
@@ -214,7 +232,7 @@ int main(int argc, char** argv) {
 						st[0] = DotProduct(vert[j]->xyz,&uvTransformMatrix[0]);
 						st[1] = DotProduct(vert[j]->xyz,&uvTransformMatrix[4]);
 
-						planedist = DotProduct(vert[j]->normal,vert[j]->xyz);
+						planedist = DotProduct(calcedNormal,vert[j]->xyz);
 						stOriginal[2] = planedist;
 						VectorCopy(vert[j]->xyz, xyzOriginal);
 
@@ -223,15 +241,21 @@ int main(int argc, char** argv) {
 						xyz[2] = DotProduct(stOriginal, &uvTransformMatrixInverted[8]);
 
 						tries++;
-						float stdistsq = (st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]);
+						float stdist = sqrtf((st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]));
 						float xyzdist = VectorDistance(xyz,xyzOriginal);
-						if (stdistsq > 0.01f) {
+						if (stdist > 0.2f) {
 							missesST++;
-							//Com_Printf("st;  original: %.3f %.3f, matrix result: %.3f %.3f\n", stOriginal[0], stOriginal[1], st[0], st[1]);
+							if (triangleSize >= 100.0) {
+								missesSTReal++;
+								//Com_Printf("st;  original: %.3f %.3f, matrix result: %.3f %.3f\n", stOriginal[0], stOriginal[1], st[0], st[1]);
+							}
 						}
-						if (xyzdist > 10.0f) {
+						if (xyzdist > 200.0f) {
 							missesXYZ++;
-							//Com_Printf("xyz; original: %.3f %.3f %.3f, matrix result: %.3f %.3f %.3f\n", xyzOriginal[0], xyzOriginal[1], xyzOriginal[2], xyz[0], xyz[1], xyz[2]);
+							if (triangleSize >= 100.0) {
+								missesXYZReal++;
+								//Com_Printf("xyz; original: %.3f %.3f %.3f, matrix result: %.3f %.3f %.3f\n", xyzOriginal[0], xyzOriginal[1], xyzOriginal[2], xyz[0], xyz[1], xyz[2]);
+							}
 						}
 					}
 
@@ -240,6 +264,7 @@ int main(int argc, char** argv) {
 		}
 	
 		Com_Printf("tries: %d, misses(ST): %d, misses(XYZ): %d\n",tries,missesST,missesXYZ);
+		Com_Printf("misses(STReal): %d, misses(XYZReal): %d\n",missesSTReal,missesXYZReal);
 	}
 
 	FS_WriteFile(fileNameOut, buffer, inputFileLength);

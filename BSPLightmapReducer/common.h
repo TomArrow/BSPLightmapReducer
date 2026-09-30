@@ -503,7 +503,7 @@ typedef vec_t vec5_t[5];
 vec_t VectorLength(const vec3_t v);
 vec_t VectorLength2(const vec2_t v);
 vec_t VectorNormalize(vec3_t v);
-
+void CrossProduct(const vec3_t v1, const vec3_t v2, vec3_t cross);
 
 typedef enum {
 	AXIS_SIDE,
