@@ -4666,7 +4666,7 @@ void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t
 qboolean __gluInvertMatrixfRowMajor(const float m[16], float invOut[16]);
 
 
-
+void applyMatrix(vec3_t myVec, float matrix[16], vec3_t result);
 
 
 

@@ -2835,3 +2835,13 @@ qboolean __gluInvertMatrixfRowMajor(const float m[16], float invOut[16])
 }
 
 
+void applyMatrix(vec3_t myVec,float matrix[16], vec3_t result) {
+	result[0] = DotProduct(myVec, &matrix[0]) + matrix[3];
+	result[1] = DotProduct(myVec, &matrix[4]) + matrix[7];
+	result[2] = DotProduct(myVec, &matrix[8]) + matrix[11];
+}
+
+//void calcBarycentric(vec3_t a, vec3_t b, vec3_t c, vec3_t point) {
+//}
+
+

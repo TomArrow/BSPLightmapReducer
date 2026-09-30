@@ -4,6 +4,523 @@
 
 // project for just playing around and testing concepts
 
+#define DEG2RAD( a ) ( (a) * (float) ( M_PI / 180.0 ) )
+#define RAD2DEG( a ) ( (a) * (float) ( 180.0 / M_PI ) )
+
+bool r_newDLights = false;
+int overbrightBits = 1;
+float r_ambientScale = 0.6;
+float r_directedScale = 1.0;
+
+
+vec_t VectorNormalize2(const vec3_t v, vec3_t out) {
+	float	length, ilength;
+
+	length = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+	length = sqrtf(length);
+
+	if (length)
+	{
+#ifndef Q3_VM // bk0101022 - FPE related
+		//	  assert( ((Q_fabs(v[0])!=0.0f) || (Q_fabs(v[1])!=0.0f) || (Q_fabs(v[2])!=0.0f)) );
+#endif
+		ilength = 1 / length;
+		out[0] = v[0] * ilength;
+		out[1] = v[1] * ilength;
+		out[2] = v[2] * ilength;
+	}
+	else {
+#ifndef Q3_VM // bk0101022 - FPE related
+		//	  assert( ((Q_fabs(v[0])==0.0f) && (Q_fabs(v[1])==0.0f) && (Q_fabs(v[2])==0.0f)) );
+#endif
+		VectorClear(out);
+	}
+
+	return length;
+
+}
+/*
+===============
+R_ColorShiftLightingBytes
+
+===============
+*/
+static	void R_ColorShiftLightingBytes( byte in[3])
+{
+	int		shift=0, r, g, b;
+
+	// should NOT do it if overbrightBits is 0
+	//if (tr.overbrightBits)
+	//	shift = 1 - tr.overbrightBits;
+
+	if (!shift)
+	{
+		return;
+	}
+
+	// shift the data based on overbright range
+	r = in[0] << shift;
+	g = in[1] << shift;
+	b = in[2] << shift;
+
+	// normalize by color instead of saturating to white
+	if ( ( r | g | b ) > 255 ) {
+		int		max;
+
+		max = r > g ? r : g;
+		max = max > b ? max : b;
+		r = r * 255 / max;
+		g = g * 255 / max;
+		b = b * 255 / max;
+	}
+
+	in[0] = r;
+	in[1] = g;
+	in[2] = b;
+}
+
+typedef unsigned short		word;
+
+typedef struct {
+	vec3_t		bounds[2];		// for culling
+	//msurface_t* firstSurface;
+	int			numSurfaces;
+} bmodel_t;
+typedef struct
+{
+	byte		ambientLight[MAXLIGHTMAPS][3];
+	byte		directLight[MAXLIGHTMAPS][3];
+	byte		styles[MAXLIGHTMAPS];
+	byte		latLong[2];
+//	byte		pad[2];								// to align to a cache line
+} mgrid_t;
+typedef struct {
+
+	vec3_t		lightGridOrigin;
+	vec3_t		lightGridSize;
+	vec3_t		lightGridInverseSize;
+	int			lightGridBounds[3];
+
+	int			lightGridOffsets[8];
+
+	vec3_t		lightGridStep;
+
+	mgrid_t			*lightGridData;
+	word		*lightGridArray;
+	int			numGridArrayElements;
+	bmodel_t	bmodels[1];
+} world_t;
+
+/*
+================
+R_LoadLightGrid
+
+================
+*/
+void R_LoadLightGrid(lump_t* l, world_t* w, byte* fileBase) {
+	int		i, j;
+	vec3_t	maxs;
+	float* wMins, * wMaxs;
+
+	w->lightGridInverseSize[0] = 1.0 / w->lightGridSize[0];
+	w->lightGridInverseSize[1] = 1.0 / w->lightGridSize[1];
+	w->lightGridInverseSize[2] = 1.0 / w->lightGridSize[2];
+
+	wMins = w->bmodels[0].bounds[0];
+	wMaxs = w->bmodels[0].bounds[1];
+
+	for (i = 0; i < 3; i++) {
+		w->lightGridOrigin[i] = w->lightGridSize[i] * ceilf(wMins[i] / w->lightGridSize[i]);
+		maxs[i] = w->lightGridSize[i] * floorf(wMaxs[i] / w->lightGridSize[i]);
+		w->lightGridBounds[i] = (maxs[i] - w->lightGridOrigin[i]) / w->lightGridSize[i] + 1;
+	}
+
+	int numGridDataElements = l->filelen / sizeof(*w->lightGridData);
+
+	w->lightGridData = (mgrid_t*)calloc(l->filelen, 1); // yes we leak, sue me
+	memcpy(w->lightGridData, (void*)(fileBase + l->fileofs), l->filelen);
+
+	// deal with overbright bits
+	for (i = 0; i < numGridDataElements; i++)
+	{
+		for (j = 0; j < MAXLIGHTMAPS; j++)
+		{
+			R_ColorShiftLightingBytes(w->lightGridData[i].ambientLight[j]);
+			R_ColorShiftLightingBytes(w->lightGridData[i].directLight[j]);
+		}
+	}
+
+	if (r_newDLights)
+	{
+		// Precalc soe data to speed up R_SetupEntityLightingGrid
+		w->lightGridStep[0] = 1;
+		w->lightGridStep[1] = w->lightGridBounds[0];
+		w->lightGridStep[2] = w->lightGridBounds[0] * w->lightGridBounds[1];
+
+		for (i = 0; i < 8; i++)
+		{
+			w->lightGridOffsets[i] = 0;
+
+			if (i & 1)
+			{
+				w->lightGridOffsets[i] += w->lightGridStep[0];
+			}
+			if (i & 2)
+			{
+				w->lightGridOffsets[i] += w->lightGridStep[1];
+			}
+			if (i & 4)
+			{
+				w->lightGridOffsets[i] += w->lightGridStep[2];
+			}
+		}
+	}
+}
+
+void R_LoadLightGridArray( lump_t *l, world_t* w, byte* fileBase) {
+
+	w->numGridArrayElements = w->lightGridBounds[0] * w->lightGridBounds[1] * w->lightGridBounds[2];
+
+	if ( l->filelen != w->numGridArrayElements * (int)sizeof(*w->lightGridArray) ) {
+		Com_Printf( "WARNING: light grid array mismatch\n" );
+		w->lightGridData = NULL;
+		return;
+	}
+
+	w->lightGridArray =(word*) calloc( l->filelen,1 );// yes we leak, sue me
+	memcpy( w->lightGridArray, (void *)(fileBase + l->fileofs), l->filelen );
+}
+
+
+
+typedef struct {
+	vec3_t				origin;				// also used as MODEL_BEAM's "from"
+
+} refEntity_t;
+typedef struct {
+
+	refEntity_t	e;
+	float		axisLength;		// compensate for non-normalized axis
+
+	qboolean	needDlights;	// true for bmodels that touch a dlight
+	qboolean	lightingCalculated;
+	vec3_t		lightDir;		// normalized direction towards light
+	vec3_t		ambientLight;	// color normalized to 0-255
+	int			ambientLightInt;	// 32 bit rgba packed
+	vec3_t		directedLight;
+	float		directionality;
+	qboolean	intShaderTime;
+} trRefEntity_t;
+
+inline void VectorScaleVector(const vec3_t a, const vec3_t b, vec3_t out)
+{
+	out[0] = a[0] * b[0];
+	out[1] = a[1] * b[1];
+	out[2] = a[2] * b[2];
+}
+
+typedef byte color4ub_t[4];
+color4ub_t	styleColors[MAX_LIGHT_STYLES] = { 0 };
+#define	FOG_TABLE_SIZE		256
+#define FUNCTABLE_SIZE		1024
+#define FUNCTABLE_SIZE2		10
+#define FUNCTABLE_MASK		(FUNCTABLE_SIZE-1)
+float					sinTable[FUNCTABLE_SIZE];
+
+static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t* world ) {
+	vec3_t			lightOrigin;
+	int				pos[3];
+	int				i, j;
+	float			frac[3];
+	int				gridStep[3];
+	vec3_t			direction;
+	float			totalFactor;
+	unsigned short	*startGridPos;
+
+	if (r_newDLights)
+	{
+		vec3_t v, invfrac;
+		float fraction[8];
+
+		VectorCopy(ent->e.origin, lightOrigin);
+		VectorSubtract( lightOrigin, world->lightGridOrigin, lightOrigin );
+		VectorScaleVector( lightOrigin, world->lightGridInverseSize, v );
+
+		pos[0] = (int)floorf(v[0]);
+		pos[1] = (int)floorf(v[1]);
+		pos[2] = (int)floorf(v[2]);
+
+		frac[0] = v[0] - (float)pos[0];
+		frac[1] = v[1] - (float)pos[1];
+		frac[2] = v[2] - (float)pos[2];
+
+		invfrac[0] = 1.0f - frac[0];
+		invfrac[1] = 1.0f - frac[1];
+		invfrac[2] = 1.0f - frac[2];
+
+		fraction[0] = invfrac[0] * invfrac[1] * invfrac[2];
+		fraction[1] = frac[0] * invfrac[1] * invfrac[2];
+		fraction[2] = invfrac[0] * frac[1] * invfrac[2];
+		fraction[3] = frac[0] * frac[1] * invfrac[2];
+		fraction[4] = invfrac[0] * invfrac[1] * frac[2];
+		fraction[5] = frac[0] * invfrac[1] * frac[2];
+		fraction[6] = invfrac[0] * frac[1] * frac[2];
+		fraction[7] = frac[0] * frac[1] * frac[2];
+
+		pos[0] = std::clamp(0, world->lightGridBounds[0] - 1, pos[0]);
+		pos[1] = std::clamp(0, world->lightGridBounds[1] - 1, pos[1]);
+		pos[2] = std::clamp(0, world->lightGridBounds[2] - 1, pos[2]);
+
+		VectorClear( ent->ambientLight );
+		VectorClear( ent->directedLight );
+		VectorClear( direction );
+
+		// trilerp the light value
+		/*
+		startGridPos = world->lightGridArray + (pos[0] * world->lightGridStep[0]) + (pos[1] * world->lightGridStep[1]) + (pos[2] * world->lightGridStep[2]);
+		*/
+		startGridPos = world->lightGridArray + (int)((pos[0] * world->lightGridStep[0])) + (int)((pos[1] * world->lightGridStep[1])) + (int)((pos[2] * world->lightGridStep[2]));
+
+		totalFactor = 0;
+		for ( i = 0 ; i < 8 ; i++ )
+		{
+			float			factor;
+			mgrid_t			*data;
+			unsigned short	*gridPos;
+			int				lat, lng;
+			vec3_t			normal;
+
+			gridPos = startGridPos + world->lightGridOffsets[i];
+
+			if (gridPos >= world->lightGridArray + world->numGridArrayElements)
+			{
+				//we've gone off the array somehow
+				continue;
+			}
+
+			data = world->lightGridData + *gridPos;
+			if ( data->styles[0] == LS_LSNONE )
+			{
+				continue;	// ignore samples in walls
+			}
+
+			factor = fraction[i];
+			totalFactor += factor;
+
+			for(j = 0; j < MAXLIGHTMAPS; j++)
+			{
+				if (data->styles[j] != LS_LSNONE)
+				{
+					const byte	style = data->styles[j];
+
+					ent->ambientLight[0] += factor * data->ambientLight[j][0] * styleColors[style][0] / 255.0f;
+					ent->ambientLight[1] += factor * data->ambientLight[j][1] * styleColors[style][1] / 255.0f;
+					ent->ambientLight[2] += factor * data->ambientLight[j][2] * styleColors[style][2] / 255.0f;
+
+					ent->directedLight[0] += factor * data->directLight[j][0] * styleColors[style][0] / 255.0f;
+					ent->directedLight[1] += factor * data->directLight[j][1] * styleColors[style][1] / 255.0f;
+					ent->directedLight[2] += factor * data->directLight[j][2] * styleColors[style][2] / 255.0f;
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			lat = data->latLong[1] << 2;
+			lng = data->latLong[0] << 2;
+
+			// decode X as cos( lat ) * sin( long )
+			// decode Y as sin( lat ) * sin( long )
+			// decode Z as cos( long )
+
+			normal[0] = sinTable[(lat + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK] * sinTable[lng];
+			normal[1] = sinTable[lat] * sinTable[lng];
+			normal[2] = sinTable[(lng + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK];
+
+			VectorMA( direction, factor, normal, direction );
+		}
+
+		if ( totalFactor > 0 && totalFactor < 0.99f )
+		{
+			totalFactor = 1.0f / totalFactor;
+			VectorScale( ent->ambientLight, totalFactor, ent->ambientLight );
+			VectorScale( ent->directedLight, totalFactor, ent->directedLight );
+		}
+
+		VectorScale( ent->ambientLight, r_ambientScale, ent->ambientLight );
+		VectorScale( ent->directedLight, r_directedScale, ent->directedLight );
+		VectorNormalize2( direction, ent->lightDir );
+	}
+	else
+	{
+
+		VectorCopy(ent->e.origin, lightOrigin);
+
+		VectorSubtract( lightOrigin, world->lightGridOrigin, lightOrigin );
+		for ( i = 0 ; i < 3 ; i++ ) {
+			float	v;
+
+			v = lightOrigin[i]*world->lightGridInverseSize[i];
+			pos[i] = floorf( v );
+			frac[i] = v - pos[i];
+			if ( pos[i] < 0 ) {
+				pos[i] = 0;
+			} else if ( pos[i] >= world->lightGridBounds[i] - 1 ) {
+				pos[i] = world->lightGridBounds[i] - 1;
+			}
+		}
+
+		VectorClear( ent->ambientLight );
+		VectorClear( ent->directedLight );
+		VectorClear( direction );
+
+		// trilerp the light value
+		gridStep[0] = 1;
+		gridStep[1] = world->lightGridBounds[0];
+		gridStep[2] = world->lightGridBounds[0] * world->lightGridBounds[1];
+		startGridPos = world->lightGridArray + (pos[0] * gridStep[0] + pos[1] * gridStep[1] + pos[2] * gridStep[2]);
+
+		totalFactor = 0;
+		for ( i = 0 ; i < 8 ; i++ ) {
+			float			factor;
+			mgrid_t			*data;
+			unsigned short	*gridPos;
+			int				lat, lng;
+			vec3_t			normal;
+
+			factor = 1.0;
+			gridPos = startGridPos;
+			for ( j = 0 ; j < 3 ; j++ ) {
+				if ( i & (1<<j) ) {
+					if ( pos[j] + 1 > world->lightGridBounds[j] - 1 ) {
+						break; // ignore values outside lightgrid
+					}
+					factor *= frac[j];
+					gridPos += gridStep[j];
+				} else {
+					factor *= (1.0f - frac[j]);
+				}
+			}
+
+			if (j != 3)
+			{
+				continue;
+			}
+			if (gridPos >= world->lightGridArray + world->numGridArrayElements)
+			{//we've gone off the array somehow
+				continue;
+			}
+			data = world->lightGridData + *gridPos;
+			if ( data->styles[0] == LS_LSNONE )
+			{
+				continue;	// ignore samples in walls
+			}
+
+			totalFactor += factor;
+
+			for(j=0;j<MAXLIGHTMAPS;j++)
+			{
+				if (data->styles[j] != LS_LSNONE)
+				{
+					const byte	style= data->styles[j];
+
+					ent->ambientLight[0] += factor * data->ambientLight[j][0] * styleColors[style][0] / 255.0f;
+					ent->ambientLight[1] += factor * data->ambientLight[j][1] * styleColors[style][1] / 255.0f;
+					ent->ambientLight[2] += factor * data->ambientLight[j][2] * styleColors[style][2] / 255.0f;
+
+					ent->directedLight[0] += factor * data->directLight[j][0] * styleColors[style][0] / 255.0f;
+					ent->directedLight[1] += factor * data->directLight[j][1] * styleColors[style][1] / 255.0f;
+					ent->directedLight[2] += factor * data->directLight[j][2] * styleColors[style][2] / 255.0f;
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			lat = data->latLong[1];
+			lng = data->latLong[0];
+			lat *= (FUNCTABLE_SIZE/256);
+			lng *= (FUNCTABLE_SIZE/256);
+
+			// decode X as cos( lat ) * sin( long )
+			// decode Y as sin( lat ) * sin( long )
+			// decode Z as cos( long )
+
+			normal[0] = sinTable[(lat + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK] * sinTable[lng];
+			normal[1] = sinTable[lat] * sinTable[lng];
+			normal[2] = sinTable[(lng + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK];
+
+			VectorMA( direction, factor, normal, direction );
+		}
+
+		if ( totalFactor > 0 && totalFactor < 0.99f )
+		{
+			totalFactor = 1.0f / totalFactor;
+			VectorScale( ent->ambientLight, totalFactor, ent->ambientLight );
+			VectorScale( ent->directedLight, totalFactor, ent->directedLight );
+		}
+
+		VectorScale( ent->ambientLight, r_ambientScale, ent->ambientLight );
+		VectorScale( ent->directedLight, r_directedScale, ent->directedLight );
+
+		VectorNormalize2( direction, ent->lightDir );
+	}
+}
+
+static vec_t VectorLengthSquared( const vec3_t v ) {
+	return (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+}
+
+int R_LightDirForPoint(vec3_t point, vec3_t lightDir, vec3_t normal, float* directionality, world_t* world, float normalDotRestrict, float normalDotRestrictLow)
+{
+	trRefEntity_t ent;
+	float dot;
+
+	if (world->lightGridData == NULL)
+		return qfalse;
+
+	Com_Memset(&ent, 0, sizeof(ent));
+	VectorCopy(point, ent.e.origin);
+	R_SetupEntityLightingGrid(&ent, world);
+
+	dot = DotProduct(ent.lightDir, normal);
+	if (VectorLengthSquared(normal) == 0.0f || dot > normalDotRestrict) {
+		VectorCopy(ent.lightDir, lightDir);
+		if (directionality) {
+			*directionality = ent.directionality;
+		}
+	}
+	else {
+		dot = (dot - normalDotRestrictLow)/(normalDotRestrict- normalDotRestrictLow);
+		if (dot > 0.0f) {
+			VectorScale(normal,(1.0f- dot), lightDir);
+			VectorMA(lightDir, dot, ent.lightDir, lightDir);
+		}
+		else {
+			VectorCopy(normal, lightDir);
+		}
+		if (directionality) {
+			*directionality = 0;
+		}
+	}
+
+	return qtrue;
+}
+
+void R_InitFunctionTables() {
+	//
+	// init function tables
+	//
+	for ( int i = 0; i < FUNCTABLE_SIZE; i++ )
+	{
+		sinTable[i]		= sinf( DEG2RAD( i * 360.0f / ( ( float ) ( FUNCTABLE_SIZE - 1 ) ) ) );
+		
+	}
+}
+
+
 enum resamplingMode_t {
 	RAW,
 	LINEAR,
@@ -155,20 +672,36 @@ int main(int argc, char** argv) {
 		lump_t* lV = &header->lumps[LUMP_DRAWVERTS];
 		lump_t* lS = &header->lumps[LUMP_SHADERS];
 		lump_t* lI = &header->lumps[LUMP_DRAWINDEXES];
+		lump_t* lm = &header->lumps[LUMP_MODELS];
+		lump_t* llG = &header->lumps[LUMP_LIGHTGRID];
+		lump_t* llA = &header->lumps[LUMP_LIGHTARRAY];
 		int len = l->filelen;
 		int lenV = lV->filelen;
 		int lenI = lI->filelen;
 		int lenS = lS->filelen;
-		if (!len || !lenV || !lenI|| !lenS) {
+		int lenM = lm->filelen;
+		if (!len || !lenV || !lenI|| !lenS || !lenM) {
 			return 1;
 		}
 		byte* buf = fileBase + l->fileofs;
 		byte* bufV = fileBase + lV->fileofs;
 		byte* bufI = fileBase + lI->fileofs;
 		byte* bufS = fileBase + lS->fileofs;
+		byte* bufM = fileBase + lm->fileofs;
 		dsurface_t* surfAsArray = (dsurface_t*)buf;
 		mapVert_t* vertAsArray = (mapVert_t*)bufV;
 		dshader_t* shadersAsArray = (dshader_t*)bufS;
+		dmodel_t* submodelsAsArray = (dmodel_t*)bufM;
+
+		world_t world{ 0 };
+		// get world bounds for lightgrid
+		for (int j = 0; j < 3; j++) {
+			world.bmodels[0].bounds[0][j] = submodelsAsArray->mins[j];
+			world.bmodels[0].bounds[1][j] = submodelsAsArray->mins[j];
+		}
+		R_LoadLightGrid(llG, &world,fileBase);
+		R_LoadLightGridArray(llA, &world,fileBase);
+
 		int* indexesAsArray = (int*)bufI;
 
 		int numSurfaces = len / sizeof(dsurface_t);
@@ -213,12 +746,34 @@ int main(int argc, char** argv) {
 						&vertAsArray[surf->firstVert + indexesAsArray[surf->firstIndex + idx]],
 					};
 
-					vec3_t calcedNormal;
+					vec3_t calcedNormal,fullSizeNormal;
 					vec3_t side1, side2;
 					VectorSubtract(vert[2]->xyz, vert[1]->xyz, side1);
 					VectorSubtract(vert[2]->xyz, vert[0]->xyz, side2);
-					CrossProduct(side1, side2, calcedNormal);
+					CrossProduct(side1, side2, fullSizeNormal);
+					VectorCopy(fullSizeNormal, calcedNormal);
 					float triangleSize = 0.5f*VectorNormalize(calcedNormal);
+
+					// barycentric matrix stuff
+					float triangleSizeyTimes2Squared = DotProduct(fullSizeNormal, fullSizeNormal);
+					vec3_t helper1, helper2;
+					float scaler = 1.0f / triangleSizeyTimes2Squared;
+					CrossProduct(side1,fullSizeNormal,helper1);
+					VectorScale(helper1, scaler, helper1);
+					CrossProduct(fullSizeNormal,side2,helper2);
+					VectorScale(helper2, scaler, helper2);
+					float baryCentricMatrix[16] = {
+						-helper1[0]-helper2[0], -helper1[1]-helper2[1], -helper1[2]-helper2[2], 1.0f + DotProduct(helper1,vert[2]->xyz) + DotProduct(helper2,vert[2]->xyz),
+						helper1[0],helper1[1],helper1[2], -DotProduct(helper1,vert[2]->xyz),
+						helper2[0],helper2[1],helper2[2], -DotProduct(helper2,vert[2]->xyz),
+						0,0,0,1
+					};
+
+					vec3_t bary[3];
+					for (int j = 0; j < 3; j++) {
+						applyMatrix(vert[j]->xyz, baryCentricMatrix,bary[j]);
+					}
+
 
 					float uvTransformMatrix[16] = { 0 };
 					float uvTransformMatrixInverted[16] = { 0 };
