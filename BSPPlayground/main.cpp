@@ -1,17 +1,20 @@
 #include "common.h"
 #define cimg_display 0
 #include "../ext/CImg.h"
+#include "CModel.h"
 
 // project for just playing around and testing concepts
 
 #define DEG2RAD( a ) ( (a) * (float) ( M_PI / 180.0 ) )
 #define RAD2DEG( a ) ( (a) * (float) ( 180.0 / M_PI ) )
 
-bool r_newDLights = false;
+bool r_newDLights = true;
 int overbrightBits = 1;
 float r_ambientScale = 0.6;
 float r_directedScale = 1.0;
 int deluxemode = 0;
+
+bool pvscheck = false;
 
 /*
 ===============
@@ -53,6 +56,26 @@ static	void R_ColorShiftLightingBytes( byte in[3])
 	in[2] = b;
 }
 
+float Com_Clamp(float min, float max, float value) {
+	if (value < min) {
+		return min;
+	}
+	if (value > max) {
+		return max;
+	}
+	return value;
+}
+
+int Com_Clampi(int min, int max, int value) {
+	if (value < min) {
+		return min;
+	}
+	if (value > max) {
+		return max;
+	}
+	return value;
+}
+
 typedef unsigned short		word;
 
 typedef struct {
@@ -76,6 +99,7 @@ typedef struct {
 	int			lightGridBounds[3];
 
 	int			lightGridOffsets[8];
+	vec3_t		lightGridOffsetsWorld[8];
 
 	vec3_t		lightGridStep;
 
@@ -86,10 +110,10 @@ typedef struct {
 	
 	char*		entityString;
 	int			entityStringLen;
-} world_t;
+} world2_t;
 
 
-void R_LoadEntities( lump_t *l, world_t* w, byte* fileBase ) {
+void R_LoadEntities( lump_t *l, world2_t* w, byte* fileBase ) {
 	const char *p;
 	char *token, *s;
 	char keyname[MAX_TOKEN_CHARS];
@@ -162,7 +186,7 @@ R_LoadLightGrid
 
 ================
 */
-void R_LoadLightGrid(lump_t* l, world_t* w, byte* fileBase) {
+void R_LoadLightGrid(lump_t* l, world2_t* w, byte* fileBase) {
 	int		i, j;
 	vec3_t	maxs;
 	float* wMins, * wMaxs;
@@ -195,7 +219,7 @@ void R_LoadLightGrid(lump_t* l, world_t* w, byte* fileBase) {
 		}
 	}
 
-	if (r_newDLights)
+	//if (r_newDLights)
 	{
 		// Precalc soe data to speed up R_SetupEntityLightingGrid
 		w->lightGridStep[0] = 1;
@@ -205,24 +229,28 @@ void R_LoadLightGrid(lump_t* l, world_t* w, byte* fileBase) {
 		for (i = 0; i < 8; i++)
 		{
 			w->lightGridOffsets[i] = 0;
+			VectorClear(w->lightGridOffsetsWorld[i]);
 
 			if (i & 1)
 			{
 				w->lightGridOffsets[i] += w->lightGridStep[0];
+				w->lightGridOffsetsWorld[i][0] += w->lightGridSize[0];
 			}
 			if (i & 2)
 			{
 				w->lightGridOffsets[i] += w->lightGridStep[1];
+				w->lightGridOffsetsWorld[i][1] += w->lightGridSize[1];
 			}
 			if (i & 4)
 			{
 				w->lightGridOffsets[i] += w->lightGridStep[2];
+				w->lightGridOffsetsWorld[i][2] += w->lightGridSize[2];
 			}
 		}
 	}
 }
 
-void R_LoadLightGridArray( lump_t *l, world_t* w, byte* fileBase) {
+void R_LoadLightGridArray( lump_t *l, world2_t* w, byte* fileBase) {
 
 	w->numGridArrayElements = w->lightGridBounds[0] * w->lightGridBounds[1] * w->lightGridBounds[2];
 
@@ -272,7 +300,9 @@ color4ub_t	styleColors[MAX_LIGHT_STYLES] = { 0 };
 #define FUNCTABLE_MASK		(FUNCTABLE_SIZE-1)
 float					sinTable[FUNCTABLE_SIZE];
 
-static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t* world ) {
+int wallsamples[3] = { 0 };
+
+static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CModel* cm ) {
 	vec3_t			lightOrigin;
 	int				pos[3];
 	int				i, j;
@@ -312,9 +342,9 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t* world ) {
 		fraction[6] = invfrac[0] * frac[1] * frac[2];
 		fraction[7] = frac[0] * frac[1] * frac[2];
 
-		pos[0] = std::clamp(0, world->lightGridBounds[0] - 1, pos[0]);
-		pos[1] = std::clamp(0, world->lightGridBounds[1] - 1, pos[1]);
-		pos[2] = std::clamp(0, world->lightGridBounds[2] - 1, pos[2]);
+		pos[0] = Com_Clampi(0, world->lightGridBounds[0] - 1, pos[0]);
+		pos[1] = Com_Clampi(0, world->lightGridBounds[1] - 1, pos[1]);
+		pos[2] = Com_Clampi(0, world->lightGridBounds[2] - 1, pos[2]);
 
 		VectorClear( ent->ambientLight );
 		VectorClear( ent->directedLight );
@@ -346,7 +376,27 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t* world ) {
 			data = world->lightGridData + *gridPos;
 			if ( data->styles[0] == LS_LSNONE )
 			{
+				wallsamples[0]++;
 				continue;	// ignore samples in walls
+			}
+
+			if (cm && pvscheck) {
+				vec3_t posHere;
+				for (j = 0; j < 3; j++) {
+					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
+				}
+				if (!cm->R_inPVS(ent->e.origin, posHere))
+				{
+					wallsamples[1]++;
+					// ignore samples in walls #2
+					continue;	
+				}
+				if (!cm->R_inPVS(posHere, posHere))
+				{
+					wallsamples[2]++;
+					// ignore samples in walls #2
+					continue;	
+				}
 			}
 
 			factor = fraction[i];
@@ -459,7 +509,28 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t* world ) {
 			data = world->lightGridData + *gridPos;
 			if ( data->styles[0] == LS_LSNONE )
 			{
+				wallsamples[0]++;
 				continue;	// ignore samples in walls
+			}
+
+
+			if (cm && pvscheck) {
+				vec3_t posHere;
+				for (j = 0; j < 3; j++) {
+					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
+				}
+				if (!cm->R_inPVS(ent->e.origin, posHere))
+				{
+					wallsamples[1]++;
+					// ignore samples in walls #2
+					continue;
+				}
+				if (!cm->R_inPVS(posHere, posHere))
+				{
+					wallsamples[2]++;
+					// ignore samples in walls #2
+					continue;
+				}
 			}
 
 			totalFactor += factor;
@@ -518,7 +589,7 @@ static vec_t VectorLengthSquared( const vec3_t v ) {
 	return (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
 }
 
-int R_LightDirForPoint(vec3_t point, vec3_t lightDir, vec3_t normal, float* directionality, world_t* world, float normalDotRestrict, float normalDotRestrictLow)
+int R_LightDirForPoint(vec3_t point, vec3_t lightDir, vec3_t normal, float* directionality, world2_t* world, float normalDotRestrict, float normalDotRestrictLow, CModel* cm)
 {
 	trRefEntity_t ent;
 	float dot;
@@ -528,7 +599,7 @@ int R_LightDirForPoint(vec3_t point, vec3_t lightDir, vec3_t normal, float* dire
 
 	Com_Memset(&ent, 0, sizeof(ent));
 	VectorCopy(point, ent.e.origin);
-	R_SetupEntityLightingGrid(&ent, world);
+	R_SetupEntityLightingGrid(&ent, world, cm);
 
 	dot = DotProduct(ent.lightDir, normal);
 	if (VectorLengthSquared(normal) == 0.0f || dot > normalDotRestrict) {
@@ -603,17 +674,28 @@ int main(int argc, char** argv) {
 
 	bool debugLD = false;
 	if (argc > 3) {
-		if (!stricmp(argv[3],"lin")) {
-			mode = LINEAR;
-		}
-		else if (!stricmp(argv[3],"raw")) {
-			mode = RAW;
-		}
-		else if (!stricmp(argv[3],"olin")) {
-			mode = LINEAR_OVERBRIGHT;
-		}
-		else if (!stricmp(argv[3],"debug")) {
-			debugLD = true;
+		int myarg = 3;
+		while (argc > myarg) {
+
+			if (!stricmp(argv[myarg], "lin")) {
+				mode = LINEAR;
+			}
+			else if (!stricmp(argv[myarg], "raw")) {
+				mode = RAW;
+			}
+			else if (!stricmp(argv[myarg], "olin")) {
+				mode = LINEAR_OVERBRIGHT;
+			}
+			else if (!stricmp(argv[myarg], "debug")) {
+				debugLD = true;
+			}
+			else if (!stricmp(argv[myarg], "nopvs")) {
+				pvscheck = false;
+			}
+			else if (!stricmp(argv[myarg], "pvs")) {
+				pvscheck = true;
+			}
+			myarg++;
 		}
 	}
 	
@@ -628,7 +710,8 @@ int main(int argc, char** argv) {
 			std::cout << "Using overbright-linear pixel blending mode (default).\n";
 			break;
 	}
-	std::cout << "Use third parameter 'lin' for linear, 'raw' for raw and 'olin' for overbright-linear mode. Linear is best for games without overbright bits (jka), overbright-linear is best for games with overbright bits (jk2).\n";
+	//std::cout << "Use third parameter 'lin' for linear, 'raw' for raw and 'olin' for overbright-linear mode. Linear is best for games without overbright bits (jka), overbright-linear is best for games with overbright bits (jk2).\n";
+	std::cout << "Use third+ param 'debug' for painting onto normal lightmap, and 'pvs'/'nopvs' for controlling whether lighting should use pvs checks. Can mess up some maps, but fix others.\n";
 
 	int inputFileLength = FS_ReadFile(fileName, (void**)&buffer, qfalse);
 	if (!buffer) {
@@ -648,7 +731,9 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	world_t world{ 0 };
+	CModel cm(fileName, true);
+
+	world2_t world{ 0 };
 
 	{
 		// 
@@ -1146,14 +1231,18 @@ int main(int argc, char** argv) {
 								// push the sample location so it's definitely above the surface.
 								float height = DotProduct(sampleLocation, calcedNormal) - planedist;
 								float newHeight = height;
-								if (height < 0) {
+								if (height < 1.0) {
 									if (height < -100) {
 										Com_Printf("very far off :( %.3f\n",height);
 									}
-									VectorMA(sampleLocation, -height + 1.0f, calcedNormal, sampleLocation); 
+									VectorMA(sampleLocation, 1.1f - height, calcedNormal, sampleLocation);
 									newHeight = DotProduct(sampleLocation, calcedNormal) - planedist;
 								}
-								R_LightDirForPoint(sampleLocation, lightDir, calcedNormal, NULL, &world, 0.2, 0.0 );
+								if (newHeight < 1.0) {
+
+									Com_Printf("wtf %.3f\n", newHeight);
+								}
+								R_LightDirForPoint(sampleLocation, lightDir, calcedNormal, NULL, &world, 0.2, 0.0, &cm);
 								VectorNormalize(lightDir);
 
 								if (!lightDir[0] && !lightDir[1] && !lightDir[2]) {
@@ -1217,6 +1306,7 @@ int main(int argc, char** argv) {
 	
 		Com_Printf("tries: %d, misses(ST): %d, misses(XYZ): %d\n",tries,missesST,missesXYZ);
 		Com_Printf("misses(STReal): %d, misses(XYZReal): %d\n",missesSTReal,missesXYZReal);
+		Com_Printf("wallsamples: %d %d %d\n",wallsamples[0],wallsamples[1],wallsamples[2]);
 	}
 
 	FS_WriteFile(fileNameOut, buffer, inputFileLength);
