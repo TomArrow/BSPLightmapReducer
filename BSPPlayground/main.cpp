@@ -587,7 +587,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	startMarker = (unsigned char*)malloc(sizeof(dheader_t));
+	//startMarker = (unsigned char*)malloc(sizeof(dheader_t));
 
 	header = (dheader_t*)buffer;
 	byte* fileBase = (byte*)header;
@@ -599,6 +599,9 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	int lmSize = (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
+	int numLightmaps, countOutputLightmaps;
+	byte* outputLightmaps;
 	{
 		lump_t* l = &header->lumps[LUMP_LIGHTMAPS];
 		int len = l->filelen;
@@ -606,11 +609,42 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		byte* buf = fileBase + l->fileofs;
+		
+		numLightmaps = len / (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
+
+		countOutputLightmaps = numLightmaps * 2;
+
+		
+		int lmbufsize = (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3) * countOutputLightmaps;
+
+
+		// replace file buffer with an appropriately sized one
+		byte* tmpBufPtr = (byte*)calloc(inputFileLength + lmbufsize,1); // we make room for the new lightmaps at the end since we can't put them where the old ones are
+		memcpy(tmpBufPtr, buffer, inputFileLength); // copy the old file there
+		free(buffer);
+		buffer = tmpBufPtr; // replacing old file buffer with new one and reiniting the pointers. this will 100% blow up in my face later someday.
+		header = (dheader_t*)buffer;
+		fileBase = (byte*)header;
+		l = &header->lumps[LUMP_LIGHTMAPS];
+		buf = fileBase + l->fileofs;
+
+
+		outputLightmaps = fileBase + inputFileLength;
+		memset(outputLightmaps, 0, lmbufsize);
+		for (int i = 0; i < numLightmaps; i++) {
+			byte* srcLm = buf + lmSize * i;
+			byte* outLm = outputLightmaps + lmSize * i * 2;
+
+			memcpy(outLm, srcLm,lmSize);
+		}
+
+		// Null the old lump and overwrite it with reduced size one.
+		Com_Memset(buf, 0, l->filelen);
+		l->fileofs = inputFileLength; // starts at the previous end of the file
+		l->filelen = lmbufsize;
+		inputFileLength += lmbufsize;
+
 		/*
-		int numLightmaps = len / (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
-
-		int countOutputLightmaps = (numLightmaps / 4 * 4) < numLightmaps ? numLightmaps / 4 + 1 : numLightmaps /4;
-
 		int outBufSize = countOutputLightmaps * (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
 		byte* outBuf = (byte*)malloc(outBufSize);
 
@@ -667,6 +701,7 @@ int main(int argc, char** argv) {
 
 	}
 
+
 	{
 		lump_t* l = &header->lumps[LUMP_SURFACES];
 		lump_t* lV = &header->lumps[LUMP_DRAWVERTS];
@@ -709,9 +744,6 @@ int main(int argc, char** argv) {
 		int tries = 0, missesXYZ = 0, missesST =0, missesXYZReal = 0, missesSTReal =0;
 		for (int i = 0; i < numSurfaces; i++) {
 			dsurface_t* surf = &surfAsArray[i];
-			if (surf->surfaceType != MST_PLANAR) {
-				continue;
-			}
 			dshader_t* shader = shadersAsArray + surf->shaderNum;
 			for (int l = 0; l < MAXLIGHTMAPS; l++) {
 				int lightmapNumOriginal = surf->lightmapNum[l];
@@ -723,7 +755,22 @@ int main(int argc, char** argv) {
 				//float targetXOffsetV = (float)(subLightmapnum % 2) * 1.f / 2.f;
 				//float targetYOffsetV = (float)(subLightmapnum / 2) * 1.f / 2.f;
 
-				//surf->lightmapNum[l] = lightmapNumOriginal / 4;
+				surf->lightmapNum[l] = lightmapNumOriginal * 2;
+			}
+			if (surf->surfaceType != MST_PLANAR) {
+				continue;
+			}
+			for (int l = 0; l < MAXLIGHTMAPS; l++) {
+				int lightmapNumOriginal = surf->lightmapNum[l];
+				if (lightmapNumOriginal < 0) continue;
+				//int targetLightmap = lightmapNumOriginal / 4;
+				//int subLightmapnum = lightmapNumOriginal % 4;
+				//int targetXOffset = (subLightmapnum % 2) * LIGHTMAP_WIDTH / 2;
+				//int targetYOffset = (subLightmapnum / 2) * LIGHTMAP_HEIGHT / 2;
+				//float targetXOffsetV = (float)(subLightmapnum % 2) * 1.f / 2.f;
+				//float targetYOffsetV = (float)(subLightmapnum / 2) * 1.f / 2.f;
+
+				//surf->lightmapNum[l] = lightmapNumOriginal*2;
 				//int targetX = targetXOffset + surf->lightmapX[l] / 2;
 				//int targetY = targetYOffset + surf->lightmapY[l] / 2;
 				//surf->lightmapX[l] = targetX;
@@ -800,6 +847,7 @@ int main(int argc, char** argv) {
 					//pinv(uvTransformMatrixPseudoInverted, 4, 4);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
 
+					bool good = true;
 					for (int j = 0; j < 3;j++) {
 						vec3_t st = { 0 }, stOriginal = { 0 };
 						float planedist;
@@ -826,6 +874,7 @@ int main(int argc, char** argv) {
 						float xyzdist = VectorDistance(xyz2,xyzOriginal);
 						if (stdist > 0.2f) {
 							missesST++;
+							good = false;
 							if (triangleSize >= 100.0) {
 								missesSTReal++;
 								//Com_Printf("st;  original: %.3f %.3f, matrix result: %.3f %.3f\n", stOriginal[0], stOriginal[1], st[0], st[1]);
@@ -833,11 +882,25 @@ int main(int argc, char** argv) {
 						}
 						if (xyzdist > 200.0f) {
 							missesXYZ++;
+							good = false;
 							if (triangleSize >= 100.0) {
 								missesXYZReal++;
 								//Com_Printf("xyz; original: %.3f %.3f %.3f, matrix result: %.3f %.3f %.3f\n", xyzOriginal[0], xyzOriginal[1], xyzOriginal[2], xyz[0], xyz[1], xyz[2]);
 							}
 						}
+
+
+					}
+
+					if (good) {
+						vec2_t uvMax, uvMin;
+						uvMin[0] = std::min(std::min(vert[0]->lightmap[l][0], vert[1]->lightmap[l][0]), vert[2]->lightmap[l][0]);
+						uvMin[1] = std::min(std::min(vert[0]->lightmap[l][1], vert[1]->lightmap[l][1]), vert[2]->lightmap[l][1]);
+						uvMax[0] = std::max(std::max(vert[0]->lightmap[l][0], vert[1]->lightmap[l][0]), vert[2]->lightmap[l][0]);
+						uvMax[1] = std::max(std::max(vert[0]->lightmap[l][1], vert[1]->lightmap[l][1]), vert[2]->lightmap[l][1]);
+						vec2i_t lmMin, lmMax;
+
+
 					}
 
 				}

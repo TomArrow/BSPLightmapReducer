@@ -494,6 +494,7 @@ typedef unsigned char 		byte;
 typedef enum { qfalse, qtrue }	qboolean;
 
 typedef float vec_t;
+typedef int vec2i_t[2];
 typedef vec_t vec2_t[2];
 typedef vec_t vec3_t[3];
 typedef vec_t vec4_t[4];
