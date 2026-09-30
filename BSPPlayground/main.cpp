@@ -11,7 +11,7 @@ bool r_newDLights = false;
 int overbrightBits = 1;
 float r_ambientScale = 0.6;
 float r_directedScale = 1.0;
-
+int deluxemode = 0;
 
 vec_t VectorNormalize2(const vec3_t v, vec3_t out) {
 	float	length, ilength;
@@ -1013,45 +1013,48 @@ int main(int argc, char** argv) {
 								R_LightDirForPoint(pixelXYZ[y * 128 + x], lightDir, calcedNormal, NULL, &world, 0.2, 0.0 );
 								VectorNormalize(lightDir);
 
-								// as in netradiant custom
-								const vec3_t g_vector3_axis_x{ 1, 0, 0 };
-								const vec3_t g_vector3_axis_y{ 0, 1, 0 };
-								const vec3_t g_vector3_axis_z{ 0, 0, 1 };
-								vec3_t myTangent{ 0 }, myBinormal{ 0 };
-								if (calcedNormal[0] == 0 && calcedNormal[1] == 0.0f) {
-									if (calcedNormal[2] == 1.0f) {
-										VectorCopy(g_vector3_axis_x,myTangent);
-										VectorCopy(g_vector3_axis_y, myBinormal);
+								vec3_t surfaceLightDir;
+								if(deluxemode == 1){ // tangentspace shizzle
+									// as in netradiant custom
+									const vec3_t g_vector3_axis_x{ 1, 0, 0 };
+									const vec3_t g_vector3_axis_y{ 0, 1, 0 };
+									const vec3_t g_vector3_axis_z{ 0, 0, 1 };
+									vec3_t myTangent{ 0 }, myBinormal{ 0 };
+									if (calcedNormal[0] == 0 && calcedNormal[1] == 0.0f) {
+										if (calcedNormal[2] == 1.0f) {
+											VectorCopy(g_vector3_axis_x,myTangent);
+											VectorCopy(g_vector3_axis_y, myBinormal);
+										}
+										else if (calcedNormal[2] == -1.0f) {
+											VectorScale(g_vector3_axis_x,-1.0f, myTangent);
+											VectorCopy(g_vector3_axis_y, myBinormal);
+										}
 									}
-									else if (calcedNormal[2] == -1.0f) {
-										VectorScale(g_vector3_axis_x,-1.0f, myTangent);
-										VectorCopy(g_vector3_axis_y, myBinormal);
+									else {
+										CrossProduct(calcedNormal, g_vector3_axis_z,myTangent);
+										VectorNormalize(myTangent);
+										CrossProduct(myTangent, calcedNormal, myBinormal);
+										VectorNormalize(myBinormal);
 									}
+
+									float somedot = DotProduct(myTangent, calcedNormal);
+									VectorMA(myTangent,-somedot,calcedNormal,myTangent);
+									somedot = DotProduct(myBinormal, calcedNormal);
+									VectorMA(myBinormal,-somedot,calcedNormal, myBinormal);
+
+									VectorNormalize(myTangent);
+									VectorNormalize(myBinormal);
+
+									if (calcedNormal[0] > 0 || calcedNormal[1] < 0 || calcedNormal[2] < 0) {
+										VectorNegate(myTangent, myTangent);
+									}
+									surfaceLightDir[0] = DotProduct(lightDir, myTangent);
+									surfaceLightDir[1] = DotProduct(lightDir, myBinormal);
+									surfaceLightDir[2] = DotProduct(lightDir, calcedNormal);
 								}
 								else {
-									CrossProduct(calcedNormal, g_vector3_axis_z,myTangent);
-									VectorNormalize(myTangent);
-									CrossProduct(myTangent, calcedNormal, myBinormal);
-									VectorNormalize(myBinormal);
+									VectorCopy(lightDir, surfaceLightDir);
 								}
-
-								float somedot = DotProduct(myTangent, calcedNormal);
-								VectorMA(myTangent,-somedot,calcedNormal,myTangent);
-								somedot = DotProduct(myBinormal, calcedNormal);
-								VectorMA(myBinormal,-somedot,calcedNormal, myBinormal);
-
-								VectorNormalize(myTangent);
-								VectorNormalize(myBinormal);
-
-								if (calcedNormal[0] > 0 || calcedNormal[1] < 0 || calcedNormal[2] < 0) {
-									VectorNegate(myTangent, myTangent);
-								}
-
-								vec3_t surfaceLightDir = {
-									DotProduct(lightDir, myTangent),
-									DotProduct(lightDir, myBinormal),
-									DotProduct(lightDir, calcedNormal)
-								};
 
 								lmReal[y * 128 * 3 + x * 3 + 0] = std::clamp((surfaceLightDir[0]*0.5f+0.5f)*256.0f,0.0f,255.0f);
 								lmReal[y * 128 * 3 + x * 3 + 1] = std::clamp((surfaceLightDir[1]*0.5f+0.5f)*256.0f,0.0f,255.0f);
