@@ -151,18 +151,22 @@ int main(int argc, char** argv) {
 	{
 		lump_t* l = &header->lumps[LUMP_SURFACES];
 		lump_t* lV = &header->lumps[LUMP_DRAWVERTS];
+		lump_t* lS = &header->lumps[LUMP_SHADERS];
 		lump_t* lI = &header->lumps[LUMP_DRAWINDEXES];
 		int len = l->filelen;
 		int lenV = lV->filelen;
 		int lenI = lI->filelen;
-		if (!len || !lenV || !lenI) {
+		int lenS = lS->filelen;
+		if (!len || !lenV || !lenI|| !lenS) {
 			return 1;
 		}
 		byte* buf = fileBase + l->fileofs;
 		byte* bufV = fileBase + lV->fileofs;
 		byte* bufI = fileBase + lI->fileofs;
+		byte* bufS = fileBase + lS->fileofs;
 		dsurface_t* surfAsArray = (dsurface_t*)buf;
 		mapVert_t* vertAsArray = (mapVert_t*)bufV;
+		dshader_t* shadersAsArray = (dshader_t*)bufS;
 		int* indexesAsArray = (int*)bufI;
 
 		int numSurfaces = len / sizeof(dsurface_t);
@@ -173,6 +177,7 @@ int main(int argc, char** argv) {
 			if (surf->surfaceType != MST_PLANAR) {
 				continue;
 			}
+			dshader_t* shader = shadersAsArray + surf->shaderNum;
 			for (int l = 0; l < MAXLIGHTMAPS; l++) {
 				int lightmapNumOriginal = surf->lightmapNum[l];
 				if (lightmapNumOriginal < 0) continue;
@@ -215,13 +220,17 @@ int main(int argc, char** argv) {
 
 					float uvTransformMatrix[16] = { 0 };
 					float uvTransformMatrixInverted[16] = { 0 };
+					float uvTransformMatrixPseudoInverted[16] = { 0 };
+
 					//vec3_t uvTransformMatrix[2];
 					//uvTransformMatrix[3] = uvTransformMatrix[7] = uvTransformMatrix[11] = uvTransformMatrix[15] = 1.0f;
 					uvTransformMatrix[15] = 1.0f;
 					makeUVTransformationMatrix(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l], calcedNormal, uvTransformMatrix);
+
+
+					memcpy(uvTransformMatrixPseudoInverted, uvTransformMatrix, sizeof(uvTransformMatrixPseudoInverted));
+					//pinv(uvTransformMatrixPseudoInverted, 4, 4);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
-
-
 
 					for (int j = 0; j < 3;j++) {
 						vec3_t st = { 0 }, stOriginal = { 0 };
