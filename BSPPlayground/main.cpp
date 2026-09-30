@@ -1,4 +1,6 @@
 #include "common.h"
+#define cimg_display 0
+#include "../ext/CImg.h"
 
 // project for just playing around and testing concepts
 
@@ -227,8 +229,19 @@ int main(int argc, char** argv) {
 					uvTransformMatrix[15] = 1.0f;
 					makeUVTransformationMatrix(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l], calcedNormal, uvTransformMatrix);
 
-
 					memcpy(uvTransformMatrixPseudoInverted, uvTransformMatrix, sizeof(uvTransformMatrixPseudoInverted));
+
+
+					cimg_library::CImg<float> A(4, 4);
+					for (int k = 0; k < 16; k++) {
+						A[k] = uvTransformMatrixPseudoInverted[k];
+					}
+					//cimg_library::CImg<float> pseudo_inv2= ((A * A.get_transpose()).invert()) * A.get_transpose();
+					cimg_library::CImg<float> pseudo_inv2= A.invert();
+					for (int k = 0; k < 16; k++) {
+						uvTransformMatrixPseudoInverted[k] = pseudo_inv2[k];
+					}
+
 					//pinv(uvTransformMatrixPseudoInverted, 4, 4);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
 
@@ -248,6 +261,10 @@ int main(int argc, char** argv) {
 						xyz[0] = DotProduct(stOriginal, &uvTransformMatrixInverted[0]);
 						xyz[1] = DotProduct(stOriginal, &uvTransformMatrixInverted[4]);
 						xyz[2] = DotProduct(stOriginal, &uvTransformMatrixInverted[8]);
+						
+						//xyz[0] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[0]);
+						//xyz[1] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[4]);
+						//xyz[2] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[8]);
 
 						tries++;
 						float stdist = sqrtf((st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]));
