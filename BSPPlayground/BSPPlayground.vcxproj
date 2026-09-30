@@ -154,6 +154,7 @@
     <ClCompile Include="..\BSPLightmapReducer\common.cpp" />
     <ClCompile Include="..\BSPLightmapReducer\filescpp.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="pinv.cpp" />
     <ClCompile Include="playgroundstuff.cpp" />
   </ItemGroup>
   <ItemGroup>
