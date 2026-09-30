@@ -19,11 +19,37 @@ static	char		cmd_tokenized[BIG_INFO_STRING + MAX_STRING_TOKENS];	// will have 0 
 
 
 
+
+void VectorInverse(vec3_t v) {
+	v[0] = -v[0];
+	v[1] = -v[1];
+	v[2] = -v[2];
+}
 vec_t VectorLength(const vec3_t v) {
 	return (vec_t)sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 vec_t VectorLength2(const vec2_t v) {
 	return (vec_t)sqrtf(v[0] * v[0] + v[1] * v[1]);
+}
+vec_t VectorLengthSquared(const vec3_t v) {
+	return (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+vec_t Vector2LengthSquared(const vec2_t v) {
+	return (v[0] * v[0] + v[1] * v[1]);
+}
+
+vec_t Distance(const vec3_t p1, const vec3_t p2) {
+	vec3_t	v;
+
+	VectorSubtract(p2, p1, v);
+	return VectorLength(v);
+}
+
+vec_t DistanceSquared(const vec3_t p1, const vec3_t p2) {
+	vec3_t	v;
+
+	VectorSubtract(p2, p1, v);
+	return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
 }
 
 vec_t VectorNormalize(vec3_t v) {
@@ -41,6 +67,47 @@ vec_t VectorNormalize(vec3_t v) {
 
 	return length;
 }
+vec_t Vector2Normalize(vec2_t v) {
+	float	length, ilength;
+
+	length = v[0] * v[0] + v[1] * v[1];
+	length = sqrt(length);
+
+	if (length) {
+		ilength = 1 / length;
+		v[0] *= ilength;
+		v[1] *= ilength;
+	}
+
+	return length;
+}
+vec_t VectorNormalize2(const vec3_t v, vec3_t out) {
+	float	length, ilength;
+
+	length = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+	length = sqrtf(length);
+
+	if (length)
+	{
+#ifndef Q3_VM // bk0101022 - FPE related
+		//	  assert( ((Q_fabs(v[0])!=0.0f) || (Q_fabs(v[1])!=0.0f) || (Q_fabs(v[2])!=0.0f)) );
+#endif
+		ilength = 1 / length;
+		out[0] = v[0] * ilength;
+		out[1] = v[1] * ilength;
+		out[2] = v[2] * ilength;
+	}
+	else {
+#ifndef Q3_VM // bk0101022 - FPE related
+		//	  assert( ((Q_fabs(v[0])==0.0f) && (Q_fabs(v[1])==0.0f) && (Q_fabs(v[2])==0.0f)) );
+#endif
+		VectorClear(out);
+	}
+
+	return length;
+
+}
+
 void CrossProduct(const vec3_t v1, const vec3_t v2, vec3_t cross) {
 	cross[0] = v1[1] * v2[2] - v1[2] * v2[1];
 	cross[1] = v1[2] * v2[0] - v1[0] * v2[2];
