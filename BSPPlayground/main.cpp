@@ -109,6 +109,9 @@ typedef struct {
 	word		*lightGridArray;
 	int			numGridArrayElements;
 	bmodel_t	bmodels[1];
+	
+	char*		entityString;
+	int			entityStringLen;
 } world_t;
 
 
@@ -124,17 +127,26 @@ void R_LoadEntities( lump_t *l, world_t* w, byte* fileBase ) {
 
 	p = (const char *)(fileBase + l->fileofs);
 
+	const char* extra = "\n\"fakedeluxemap\" \"1\"";
+	int extraLen = strlen(extra);
+
 	// store for reference by the cgame
-	char* entityString = (char *)calloc( l->filelen + 1, 1 );
-	Q_strncpyz(entityString, l->filelen + 1, p, l->filelen + 1);
+	w->entityStringLen = l->filelen + 1 + extraLen;
+	w->entityString = (char *)calloc(w->entityStringLen, 1 );
+	Q_strncpyz(w->entityString, l->filelen + 1, p, l->filelen + 1);
 	//strcpy( entityString, p );
-	entityString[l->filelen] = '\0';
-	const char* entityParsePoint = (const char *) entityString;
+	w->entityString[l->filelen] = '\0';
+	p = (const char *)w->entityString;
 
 	token = COM_ParseExt( &p, qtrue );
 	if (!*token || *token != '{') {
 		return;
 	}
+
+	int lenSoFar = p - w->entityString;
+	memmove(w->entityString + lenSoFar + extraLen, w->entityString + lenSoFar, l->filelen + 1 - lenSoFar);
+	memcpy(w->entityString + lenSoFar, extra, extraLen);
+
 	// only parse the world spawn
 	while ( 1 ) {
 		// parse key
@@ -662,6 +674,34 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	world_t world{ 0 };
+
+	{
+		// 
+		lump_t* lE = &header->lumps[LUMP_ENTITIES];
+		R_LoadEntities(lE, &world, fileBase);
+
+		// replace file buffer with an appropriately sized one
+		byte* tmpBufPtr = (byte*)calloc(inputFileLength+world.entityStringLen, 1); // we make room for the new lightmaps at the end since we can't put them where the old ones are
+		memcpy(tmpBufPtr, buffer, inputFileLength); // copy the old file there
+		free(buffer);
+		buffer = tmpBufPtr; // replacing old file buffer with new one and reiniting the pointers. this will 100% blow up in my face later someday.
+		header = (dheader_t*)buffer;
+		fileBase = (byte*)header;
+		lE = &header->lumps[LUMP_ENTITIES];
+		byte* buf = fileBase + lE->fileofs;
+
+		byte* outputEntityString = fileBase + inputFileLength;
+		memcpy(outputEntityString, world.entityString, world.entityStringLen);
+
+
+		// Null the old lump and overwrite it with reduced size one.
+		Com_Memset(buf, 0, lE->filelen);
+		lE->fileofs = inputFileLength; // starts at the previous end of the file
+		lE->filelen = world.entityStringLen;
+		inputFileLength += world.entityStringLen;
+	}
+
 	int lmSize = (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
 	int numLightmaps, countOutputLightmaps;
 	byte* outputLightmaps;
@@ -672,6 +712,7 @@ int main(int argc, char** argv) {
 		if (!len) {
 			return 1;
 		}
+
 		byte* buf = fileBase + l->fileofs;
 		
 		numLightmaps = len / (LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3);
@@ -765,7 +806,6 @@ int main(int argc, char** argv) {
 
 	}
 
-
 	{
 		lump_t* l = &header->lumps[LUMP_SURFACES];
 		lump_t* lV = &header->lumps[LUMP_DRAWVERTS];
@@ -793,14 +833,12 @@ int main(int argc, char** argv) {
 		dshader_t* shadersAsArray = (dshader_t*)bufS;
 		dmodel_t* submodelsAsArray = (dmodel_t*)bufM;
 
-		world_t world{ 0 };
 		// get world bounds for lightgrid
 		for (int j = 0; j < 3; j++) {
 			world.bmodels[0].bounds[0][j] = submodelsAsArray->mins[j];
 			world.bmodels[0].bounds[1][j] = submodelsAsArray->maxs[j];
 		}
 		R_InitFunctionTables();
-		R_LoadEntities(lE,&world,fileBase);
 		R_LoadLightGrid(llG, &world,fileBase);
 		R_LoadLightGridArray(llA, &world,fileBase);
 
