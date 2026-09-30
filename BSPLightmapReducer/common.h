@@ -4664,8 +4664,9 @@ typedef struct dsurface_s {
 void generateTransformationMatrixRow(vec3_t vec1i, vec3_t vec2i, vec3_t vec3i, float resultValue1, float resultValue2, float resultValue3, vec3_t transformVec);
 void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t matrix[2]);
 void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t normal, float matrix[16]);
+void makeUVTransformationMatrixSafe(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t normal, float matrix[16]);
 qboolean __gluInvertMatrixfRowMajor(const float m[16], float invOut[16]);
-
+void myGlMultMatrixV2(const float* a, const float* b, float* out);
 
 void applyMatrix(vec3_t myVec, float matrix[16], vec3_t result);
 

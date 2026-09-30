@@ -1,6 +1,6 @@
 #include "common.h"
-//#define cimg_display 0
-//#include "../ext/CImg.h"
+#define cimg_display 0
+#include "../ext/CImg.h"
 
 // project for just playing around and testing concepts
 
@@ -615,6 +615,7 @@ int main(int argc, char** argv) {
 
 	resamplingMode_t mode = LINEAR_OVERBRIGHT;
 
+	bool debugLD = false;
 	if (argc > 3) {
 		if (!stricmp(argv[3],"lin")) {
 			mode = LINEAR;
@@ -624,6 +625,9 @@ int main(int argc, char** argv) {
 		}
 		else if (!stricmp(argv[3],"olin")) {
 			mode = LINEAR_OVERBRIGHT;
+		}
+		else if (!stricmp(argv[3],"debug")) {
+			debugLD = true;
 		}
 	}
 	
@@ -895,20 +899,20 @@ int main(int argc, char** argv) {
 					//vec3_t uvTransformMatrix[2];
 					//uvTransformMatrix[3] = uvTransformMatrix[7] = uvTransformMatrix[11] = uvTransformMatrix[15] = 1.0f;
 					uvTransformMatrix[15] = 1.0f;
-					makeUVTransformationMatrix(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l], calcedNormal, uvTransformMatrix);
+					makeUVTransformationMatrixSafe(vert[0]->xyz, vert[0]->lightmap[l], vert[1]->xyz, vert[1]->lightmap[l], vert[2]->xyz, vert[2]->lightmap[l], calcedNormal, uvTransformMatrix);
 
 					memcpy(uvTransformMatrixPseudoInverted, uvTransformMatrix, sizeof(uvTransformMatrixPseudoInverted));
 
 
-					//cimg_library::CImg<float> A(4, 4);
-					//for (int k = 0; k < 16; k++) {
-					//	A[k] = uvTransformMatrixPseudoInverted[k];
-					//}
-					////cimg_library::CImg<float> pseudo_inv2= ((A * A.get_transpose()).invert()) * A.get_transpose();
-					//cimg_library::CImg<float> pseudo_inv2= A.invert();
-					//for (int k = 0; k < 16; k++) {
-					//	uvTransformMatrixPseudoInverted[k] = pseudo_inv2[k];
-					//}
+					cimg_library::CImg<float> A(4, 4);
+					for (int k = 0; k < 16; k++) {
+						A[k] = uvTransformMatrixPseudoInverted[k];
+					}
+					//cimg_library::CImg<float> pseudo_inv2= ((A * A.get_transpose()).invert()) * A.get_transpose();
+					cimg_library::CImg<float> pseudo_inv2= A.invert();
+					for (int k = 0; k < 16; k++) {
+						uvTransformMatrixPseudoInverted[k] = pseudo_inv2[k];
+					}
 
 					//pinv(uvTransformMatrixPseudoInverted, 4, 4);
 					__gluInvertMatrixfRowMajor(uvTransformMatrix, uvTransformMatrixInverted);
@@ -921,20 +925,23 @@ int main(int argc, char** argv) {
 						vec3_t xyz, xyz2, xyzOriginal;
 						stOriginal[0] = vert[j]->lightmap[l][0];
 						stOriginal[1] = vert[j]->lightmap[l][1];
-						st[0] = DotProduct(vert[j]->xyz,&uvTransformMatrix[0]);
-						st[1] = DotProduct(vert[j]->xyz,&uvTransformMatrix[4]);
+
+						applyMatrix(vert[j]->xyz, uvTransformMatrix, st);
+						//st[0] = DotProduct(vert[j]->xyz,&uvTransformMatrix[0]);
+						//st[1] = DotProduct(vert[j]->xyz,&uvTransformMatrix[4]);
 
 						planedist = DotProduct(calcedNormal,vert[j]->xyz);
 						stOriginal[2] = planedist;
 						VectorCopy(vert[j]->xyz, xyzOriginal);
 
-						xyz[0] = DotProduct(stOriginal, &uvTransformMatrixInverted[0]);
-						xyz[1] = DotProduct(stOriginal, &uvTransformMatrixInverted[4]);
-						xyz[2] = DotProduct(stOriginal, &uvTransformMatrixInverted[8]);
+						applyMatrix(stOriginal, uvTransformMatrixInverted, xyz);
+						//xyz[0] = DotProduct(stOriginal, &uvTransformMatrixInverted[0]);
+						//xyz[1] = DotProduct(stOriginal, &uvTransformMatrixInverted[4]);
+						//xyz[2] = DotProduct(stOriginal, &uvTransformMatrixInverted[8]);
 						
-						xyz2[0] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[0]);
-						xyz2[1] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[4]);
-						xyz2[2] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[8]);
+						//xyz2[0] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[0]);
+						//xyz2[1] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[4]);
+						//xyz2[2] = DotProduct(stOriginal, &uvTransformMatrixPseudoInverted[8]);
 
 						tries++;
 						float stdist = sqrtf((st[0] - stOriginal[0]) * (st[0] - stOriginal[0]) + (st[1] - stOriginal[1]) * (st[1] - stOriginal[1]));
@@ -959,7 +966,16 @@ int main(int argc, char** argv) {
 
 					}
 
-					if (good) {
+					if (!good && triangleSize > 400.0f) {
+						Com_Printf("bad big tri :( %f ( %f %f %f ) ( %f %f %f ) ( %f %f %f )\n", triangleSize,
+							vert[0]->xyz[0],vert[0]->xyz[1],vert[0]->xyz[1],
+							vert[1]->xyz[0],vert[1]->xyz[1],vert[1]->xyz[1],
+							vert[2]->xyz[0],vert[2]->xyz[1],vert[2]->xyz[1]
+						);
+					}
+
+					if (good || debugLD) 
+					do {
 						vec2_t uvMax, uvMin;
 						uvMin[0] = std::min(std::min(vert[0]->lightmap[l][0], vert[1]->lightmap[l][0]), vert[2]->lightmap[l][0]);
 						uvMin[1] = std::min(std::min(vert[0]->lightmap[l][1], vert[1]->lightmap[l][1]), vert[2]->lightmap[l][1]);
@@ -971,10 +987,18 @@ int main(int argc, char** argv) {
 						lmMax[0] = std::ceil(std::clamp(uvMax[0] * 128.0f, 0.0f, 128.0f-1.0f)) + 0.5f;
 						lmMax[1] = std::ceil(std::clamp(uvMax[1] * 128.0f, 0.0f, 128.0f-1.0f)) + 0.5f;
 
-						byte* lm = outputLightmapUsageInfo + lmSize * (lightmapNumOriginal + 1);
-						byte* lmReal = outputLightmaps + lmSize * (lightmapNumOriginal + 1);
-						for (int x = lmMin[0]; x < lmMax[0];x++) {
-							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+						int lmOffset = debugLD ? 0 : 1;
+						byte* lm = outputLightmapUsageInfo + lmSize * (lightmapNumOriginal + lmOffset);
+						byte* lmReal = outputLightmaps + lmSize * (lightmapNumOriginal + lmOffset);
+						for (int x = lmMin[0]; x <= lmMax[0];x++) {
+							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
+								if (debugLD && !good && !lm[y * 128 * 3 + x * 3 + 2]) {
+									lmReal[y * 128 * 3 + x * 3 + 0] = 0;
+									lmReal[y * 128 * 3 + x * 3 + 1] = 0;
+									lmReal[y * 128 * 3 + x * 3 + 2] = triangleSizeSqrtIndicator;
+									continue;
+								}
+
 								vec3_t pixelUv;
 								vec3_t xyz, bary;
 								pixelUv[0] = ((float)x + 0.5f) / 128.0f;
@@ -991,8 +1015,11 @@ int main(int argc, char** argv) {
 								lm[y * 128 * 3 + x * 3] = 255;
 							}
 						}
-						for (int x = lmMin[0]; x < lmMax[0]; x++) {
-							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+						if (!good) {
+							break;
+						}
+						for (int x = lmMin[0]; x <= lmMax[0]; x++) {
+							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
 
 								for (int xx = std::max(x,0); xx < std::min(127,lmMax[0]+1); xx++) {
 									for (int yy = std::max(lmMin[1], 0); yy < std::min(127, lmMax[1]); yy++) {
@@ -1003,15 +1030,32 @@ int main(int argc, char** argv) {
 								}
 							}
 						}
-						for (int x = lmMin[0]; x < lmMax[0]; x++) {
-							for (int y = lmMin[1]; y < lmMax[1]; y++) {
+						for (int x = lmMin[0]; x <= lmMax[0]; x++) {
+							for (int y = lmMin[1]; y <= lmMax[1]; y++) {
 								if (!lm[y * 128 * 3 + x * 3 + 1] || lm[y * 128 * 3 + x * 3 + 2] > triangleSizeSqrtIndicator) {
 									// pixel already written to by a bigger triangle (is that a good criterion?) or not inside triangle
 									continue;
 								}
+								vec3_t sampleLocation;
 								vec3_t lightDir;
-								R_LightDirForPoint(pixelXYZ[y * 128 + x], lightDir, calcedNormal, NULL, &world, 0.2, 0.0 );
+
+								VectorCopy(pixelXYZ[y * 128 + x], sampleLocation);
+								// push the sample location so it's definitely above the surface.
+								float height = DotProduct(sampleLocation, calcedNormal) - planedist;
+								float newHeight = height;
+								if (height < 0) {
+									if (height < -100) {
+										Com_Printf("very far off :( %.3f\n",height);
+									}
+									VectorMA(sampleLocation, -height + 1.0f, calcedNormal, sampleLocation); 
+									newHeight = DotProduct(sampleLocation, calcedNormal) - planedist;
+								}
+								R_LightDirForPoint(sampleLocation, lightDir, calcedNormal, NULL, &world, 0.2, 0.0 );
 								VectorNormalize(lightDir);
+
+								if (!lightDir[0] && !lightDir[1] && !lightDir[2]) {
+									Com_Printf("dead lights :(\n");
+								}
 
 								vec3_t surfaceLightDir;
 								if(deluxemode == 1){ // tangentspace shizzle
@@ -1062,7 +1106,7 @@ int main(int argc, char** argv) {
 								lm[y * 128 * 3 + x * 3 + 2] = triangleSizeSqrtIndicator;
 							}
 						}
-					}
+					} while (0);
 
 				}
 			}

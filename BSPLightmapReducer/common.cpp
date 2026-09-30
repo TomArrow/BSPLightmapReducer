@@ -2747,8 +2747,71 @@ void makeUVTransformationMatrix(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t
 	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[1], vec2o[1], vec3o[1], &matrix[4]);
 	VectorCopy(normal,&matrix[8]);
 }
+void makeUVTransformationMatrixSafe(vec3_t vec1i, vec2_t vec1o, vec3_t vec2i, vec2_t vec2o, vec3_t vec3i, vec2_t vec3o, vec3_t normal, float matrix[16]) {
+	float planedist = DotProduct(vec1i, normal);
+	if (planedist < 10.0f && planedist > -10.0f) {
+		// we are risking the calculation blowing up in our face so add an extra stage.
+		// offset dangerous dimensions a bit
+		float add = planedist < 0 ? -10.0f : 10.0f;
+		vec3_t transposition;
+		VectorScale(normal, add, transposition);
+		float preTransform[16] = {
+			1,0,0,transposition[0],
+			0,1,0,transposition[1],
+			0,0,1,transposition[2],
+			0,0,0,1
+		};
+		vec3_t transposed[3];
+		VectorAdd(vec1i,transposition,transposed[0]);
+		VectorAdd(vec2i,transposition,transposed[1]);
+		VectorAdd(vec3i,transposition,transposed[2]);
+		generateTransformationMatrixRow(transposed[0], transposed[1], transposed[2], vec1o[0], vec2o[0], vec3o[0], &matrix[0]);
+		generateTransformationMatrixRow(transposed[0], transposed[1], transposed[2], vec1o[1], vec2o[1], vec3o[1], &matrix[4]);
+		VectorCopy(normal, &matrix[8]);
+		matrix[11] = -add;
+		float tmp[16];
+		memcpy(tmp,matrix,sizeof(tmp));
+		myGlMultMatrixV2(preTransform, tmp, matrix);
+		return;
+	}
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[0], vec2o[0], vec3o[0], &matrix[0]);
+	generateTransformationMatrixRow(vec1i, vec2i, vec3i, vec1o[1], vec2o[1], vec3o[1], &matrix[4]);
+	VectorCopy(normal,&matrix[8]);
+}
 
+void myGlMultMatrix( const float *a, const float *b, float *out ) {
+	int		i, j;
 
+	for ( i = 0 ; i < 4 ; i++ ) {
+		for ( j = 0 ; j < 4 ; j++ ) {
+			out[ i * 4 + j ] =
+				a [ i * 4 + 0 ] * b [ 0 * 4 + j ]
+				+ a [ i * 4 + 1 ] * b [ 1 * 4 + j ]
+				+ a [ i * 4 + 2 ] * b [ 2 * 4 + j ]
+				+ a [ i * 4 + 3 ] * b [ 3 * 4 + j ];
+		}
+	}
+}
+
+/*
+==========================
+myGlMultMatrixV2
+
+==========================
+*/
+void myGlMultMatrixV2( const float *a, const float *b, float *out ) {
+	int		i, j;
+
+	for ( i = 0 ; i < 4 ; i++ ) {
+		for ( j = 0 ; j < 4 ; j++ ) {
+			out[ j * 4 + i ] =
+				a [ 0 * 4 + i ] * b [ j * 4 + 0 ]
+				+ a [ 1 * 4 + i ] * b [ j * 4 + 1 ]
+				+ a [ 2 * 4 + i ] * b [ j * 4 + 2 ]
+				+ a [ 3 * 4 + i ] * b [ j * 4 + 3 ];
+		}
+	}
+}
 
 
 
