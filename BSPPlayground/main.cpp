@@ -15,6 +15,7 @@ float r_directedScale = 1.0;
 int deluxemode = 0;
 
 bool pvscheck = false;
+bool tracecheck = true;
 
 /*
 ===============
@@ -300,7 +301,7 @@ color4ub_t	styleColors[MAX_LIGHT_STYLES] = { 0 };
 #define FUNCTABLE_MASK		(FUNCTABLE_SIZE-1)
 float					sinTable[FUNCTABLE_SIZE];
 
-int wallsamples[3] = { 0 };
+int wallsamples[4] = { 0 };
 
 static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CModel* cm ) {
 	vec3_t			lightOrigin;
@@ -380,24 +381,43 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CMod
 				continue;	// ignore samples in walls
 			}
 
-			if (cm && pvscheck) {
+			if (cm && (pvscheck||tracecheck)) {
 				vec3_t posHere;
 				for (j = 0; j < 3; j++) {
 					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
 				}
-				if (!cm->R_inPVS(ent->e.origin, posHere))
-				{
-					wallsamples[1]++;
-					// ignore samples in walls #2
-					continue;	
+				if (tracecheck) {
+					trace_t trace;
+					const float maxDeviationRadiant = std::max(sqrtf(3.0f*(18.0f*18.0f)), 0.5f*VectorLength(world->lightGridSize)); // netradiant-custom nudges half the gridsize, gtkradiant 9 and 18 units, so we can be off by up to this amount, and the gridpoint can still contain valid info for the current location
+					// note this logic most likely does not 100% perfectly account for all scenarios, its an approximation of mine.
+					if (VectorDistance(ent->e.origin, posHere) > maxDeviationRadiant) {
+						cm->CM_BoxTrace(&trace, ent->e.origin, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
+						if (!trace.allsolid && !trace.startsolid && trace.fraction < 1.0f) {
+							float remainingDistance = VectorDistance(trace.endpos, posHere);
+							if (remainingDistance > maxDeviationRadiant) {
+								wallsamples[3]++;
+								// ignore samples in walls #2
+								continue;
+							}
+						}
+					}
 				}
-				if (!cm->R_inPVS(posHere, posHere))
-				{
-					wallsamples[2]++;
-					// ignore samples in walls #2
-					continue;	
+				if (pvscheck) {
+					if (!cm->R_inPVS(ent->e.origin, posHere))
+					{
+						wallsamples[1]++;
+						// ignore samples in walls #2
+						continue;	
+					}
+					if (!cm->R_inPVS(posHere, posHere))
+					{
+						wallsamples[2]++;
+						// ignore samples in walls #2
+						continue;	
+					}
 				}
 			}
+
 
 			factor = fraction[i];
 			totalFactor += factor;
@@ -514,22 +534,40 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CMod
 			}
 
 
-			if (cm && pvscheck) {
+			if (cm && (pvscheck||tracecheck)) {
 				vec3_t posHere;
 				for (j = 0; j < 3; j++) {
 					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
 				}
-				if (!cm->R_inPVS(ent->e.origin, posHere))
-				{
-					wallsamples[1]++;
-					// ignore samples in walls #2
-					continue;
+				if (tracecheck) {
+					trace_t trace;
+					const float maxDeviationRadiant = std::max(sqrtf(3.0f*(18.0f*18.0f)), VectorLength(world->lightGridSize)); // netradiant-custom nudges half the gridsize, gtkradiant 9 and 18 units, so we can be off by up to this amount, and the gridpoint can still contain valid info for the current location
+					// note this logic most likely does not 100% perfectly account for all scenarios, its an approximation of mine.
+					if (VectorDistance(ent->e.origin, posHere) > maxDeviationRadiant) {
+						cm->CM_BoxTrace(&trace, ent->e.origin, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
+						if (!trace.allsolid && !trace.startsolid && trace.fraction < 1.0f) {
+							float remainingDistance = VectorDistance(trace.endpos, posHere);
+							if (remainingDistance > maxDeviationRadiant) {
+								wallsamples[3]++;
+								// ignore samples in walls #2
+								continue;
+							}
+						}
+					}
 				}
-				if (!cm->R_inPVS(posHere, posHere))
-				{
-					wallsamples[2]++;
-					// ignore samples in walls #2
-					continue;
+				if (pvscheck) {
+					if (!cm->R_inPVS(ent->e.origin, posHere))
+					{
+						wallsamples[1]++;
+						// ignore samples in walls #2
+						continue;	
+					}
+					if (!cm->R_inPVS(posHere, posHere))
+					{
+						wallsamples[2]++;
+						// ignore samples in walls #2
+						continue;	
+					}
 				}
 			}
 
@@ -695,6 +733,12 @@ int main(int argc, char** argv) {
 			else if (!stricmp(argv[myarg], "pvs")) {
 				pvscheck = true;
 			}
+			else if (!stricmp(argv[myarg], "notrace")) {
+				tracecheck = false;
+			}
+			else if (!stricmp(argv[myarg], "trace")) {
+				tracecheck = true;
+			}
 			myarg++;
 		}
 	}
@@ -711,7 +755,7 @@ int main(int argc, char** argv) {
 			break;
 	}
 	//std::cout << "Use third parameter 'lin' for linear, 'raw' for raw and 'olin' for overbright-linear mode. Linear is best for games without overbright bits (jka), overbright-linear is best for games with overbright bits (jk2).\n";
-	std::cout << "Use third+ param 'debug' for painting onto normal lightmap, and 'pvs'/'nopvs' for controlling whether lighting should use pvs checks. Can mess up some maps, but fix others.\n";
+	std::cout << "Use third+ param 'debug' for painting onto normal lightmap, and 'pvs'/'nopvs' for controlling whether deluxe should use pvs checks, and 'trace'/'notrace' for controlling whether deluxe should use trace checks. Can mess up some maps, but fix others.\n";
 
 	int inputFileLength = FS_ReadFile(fileName, (void**)&buffer, qfalse);
 	if (!buffer) {
@@ -1306,7 +1350,7 @@ int main(int argc, char** argv) {
 	
 		Com_Printf("tries: %d, misses(ST): %d, misses(XYZ): %d\n",tries,missesST,missesXYZ);
 		Com_Printf("misses(STReal): %d, misses(XYZReal): %d\n",missesSTReal,missesXYZReal);
-		Com_Printf("wallsamples: %d %d %d\n",wallsamples[0],wallsamples[1],wallsamples[2]);
+		Com_Printf("wallsamples: %d %d %d %d\n",wallsamples[0],wallsamples[1],wallsamples[2],wallsamples[3]);
 	}
 
 	FS_WriteFile(fileNameOut, buffer, inputFileLength);
