@@ -292,6 +292,60 @@ inline void VectorScaleVector(const vec3_t a, const vec3_t b, vec3_t out)
 	out[1] = a[1] * b[1];
 	out[2] = a[2] * b[2];
 }
+int wallsamples[4] = { 0 };
+
+static bool R_LightGridCheckGridPointValidity(CModel* cm, int i, vec3_t origin, int pos[3], world2_t* world) {
+	if (cm && (pvscheck || tracecheck)) {
+		int j;
+		vec3_t posHere;
+		for (j = 0; j < 3; j++) {
+			posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
+		}
+		if (tracecheck) {
+			trace_t trace;
+			const float maxDeviationRadiant = std::max(sqrtf(3.0f * (18.0f * 18.0f)), 0.5f * VectorLength(world->lightGridSize)); // netradiant-custom nudges half the gridsize, gtkradiant 9 and 18 units, so we can be off by up to this amount, and the gridpoint can still contain valid info for the current location
+			// note this logic most likely does not 100% perfectly account for all scenarios, its an approximation of mine.
+			//if (VectorDistance(ent->e.origin, posHere) > maxDeviationRadiant) {
+			cm->CM_BoxTrace(&trace, origin, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
+			if (!trace.allsolid && !trace.startsolid && trace.fraction < 1.0f) {
+
+				// don't have clear line of sight. 
+				// check whether the gridpoint is in valid space. if not, it may have nudged things.
+				trace_t trace2;
+				cm->CM_BoxTrace(&trace2, posHere, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
+				if (trace2.startsolid || trace2.allsolid) {
+
+					float remainingDistance = VectorDistance(trace.endpos, posHere);
+					if (remainingDistance > maxDeviationRadiant) {
+						wallsamples[3]++;
+						// ignore samples in walls #2
+						return qfalse;
+					}
+				}
+				else {
+					wallsamples[3]++;
+					return qfalse;
+				}
+			}
+			//}
+		}
+		if (pvscheck) {
+			if (!cm->R_inPVS(origin, posHere))
+			{
+				wallsamples[1]++;
+				// ignore samples in walls #2
+				return false;
+			}
+			if (!cm->R_inPVS(posHere, posHere)) // this never really triggers tbh, seems q3map2 is smart enough to do it itself.
+			{
+				wallsamples[2]++;
+				// ignore samples in walls #2
+				return false;
+			}
+		}
+	}
+	return true;
+}
 
 typedef byte color4ub_t[4];
 color4ub_t	styleColors[MAX_LIGHT_STYLES] = { 0 };
@@ -301,7 +355,6 @@ color4ub_t	styleColors[MAX_LIGHT_STYLES] = { 0 };
 #define FUNCTABLE_MASK		(FUNCTABLE_SIZE-1)
 float					sinTable[FUNCTABLE_SIZE];
 
-int wallsamples[4] = { 0 };
 
 static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CModel* cm ) {
 	vec3_t			lightOrigin;
@@ -381,43 +434,9 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CMod
 				continue;	// ignore samples in walls
 			}
 
-			if (cm && (pvscheck||tracecheck)) {
-				vec3_t posHere;
-				for (j = 0; j < 3; j++) {
-					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
-				}
-				if (tracecheck) {
-					trace_t trace;
-					const float maxDeviationRadiant = std::max(sqrtf(3.0f*(18.0f*18.0f)), 0.5f*VectorLength(world->lightGridSize)); // netradiant-custom nudges half the gridsize, gtkradiant 9 and 18 units, so we can be off by up to this amount, and the gridpoint can still contain valid info for the current location
-					// note this logic most likely does not 100% perfectly account for all scenarios, its an approximation of mine.
-					if (VectorDistance(ent->e.origin, posHere) > maxDeviationRadiant) {
-						cm->CM_BoxTrace(&trace, ent->e.origin, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
-						if (!trace.allsolid && !trace.startsolid && trace.fraction < 1.0f) {
-							float remainingDistance = VectorDistance(trace.endpos, posHere);
-							if (remainingDistance > maxDeviationRadiant) {
-								wallsamples[3]++;
-								// ignore samples in walls #2
-								continue;
-							}
-						}
-					}
-				}
-				if (pvscheck) {
-					if (!cm->R_inPVS(ent->e.origin, posHere))
-					{
-						wallsamples[1]++;
-						// ignore samples in walls #2
-						continue;	
-					}
-					if (!cm->R_inPVS(posHere, posHere))
-					{
-						wallsamples[2]++;
-						// ignore samples in walls #2
-						continue;	
-					}
-				}
+			if (!R_LightGridCheckGridPointValidity(cm, i, ent->e.origin, pos, world)) {
+				continue;
 			}
-
 
 			factor = fraction[i];
 			totalFactor += factor;
@@ -534,41 +553,8 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world2_t* world, CMod
 			}
 
 
-			if (cm && (pvscheck||tracecheck)) {
-				vec3_t posHere;
-				for (j = 0; j < 3; j++) {
-					posHere[j] = world->lightGridOrigin[j] + pos[j] * world->lightGridSize[j] + world->lightGridOffsetsWorld[i][j];
-				}
-				if (tracecheck) {
-					trace_t trace;
-					const float maxDeviationRadiant = std::max(sqrtf(3.0f*(18.0f*18.0f)), VectorLength(world->lightGridSize)); // netradiant-custom nudges half the gridsize, gtkradiant 9 and 18 units, so we can be off by up to this amount, and the gridpoint can still contain valid info for the current location
-					// note this logic most likely does not 100% perfectly account for all scenarios, its an approximation of mine.
-					if (VectorDistance(ent->e.origin, posHere) > maxDeviationRadiant) {
-						cm->CM_BoxTrace(&trace, ent->e.origin, posHere, NULL, NULL, 0, MASK_PLAYERSOLID, qfalse);
-						if (!trace.allsolid && !trace.startsolid && trace.fraction < 1.0f) {
-							float remainingDistance = VectorDistance(trace.endpos, posHere);
-							if (remainingDistance > maxDeviationRadiant) {
-								wallsamples[3]++;
-								// ignore samples in walls #2
-								continue;
-							}
-						}
-					}
-				}
-				if (pvscheck) {
-					if (!cm->R_inPVS(ent->e.origin, posHere))
-					{
-						wallsamples[1]++;
-						// ignore samples in walls #2
-						continue;	
-					}
-					if (!cm->R_inPVS(posHere, posHere))
-					{
-						wallsamples[2]++;
-						// ignore samples in walls #2
-						continue;	
-					}
-				}
+			if (!R_LightGridCheckGridPointValidity(cm, i, ent->e.origin, pos, world)) {
+				continue;
 			}
 
 			totalFactor += factor;
