@@ -1,0 +1,140 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: master
+  pull_request:
+    branches: master
+  release:
+    types: [created]
+
+jobs:
+
+  vs2022:
+    name: Build VS 2022 (Portable), ${{ matrix.build_type }}, ${{ matrix.arch }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+        arch: [Win32, x64]
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.1
+
+
+    - uses: thepwrtank18/install-vs-components@v1.1.1
+      with:
+        components: Microsoft.VisualStudio.Component.VC.v141.x86.x64
+        
+    - name: Get Win 8.1 SDK
+      run: |
+        import subprocess
+        import urllib.request
+        urllib.request.urlretrieve("https://go.microsoft.com/fwlink/p/?LinkId=323507", "sdksetup.exe")
+        subprocess.run(["sdksetup.exe", "/q", "/norestart", "/features", "OptionId.WindowsDesktopSoftwareDevelopmentKit", "OptionId.NetFxSoftwareDevelopmentKit"], check=True, capture_output=True)
+      shell: python
+      
+      
+    - name: Build BSPLightmapReducer
+      working-directory: ${{github.workspace}}
+      shell: cmd
+      run: msbuild /m /p:Configuration=${{ matrix.build_type }} /p:Platform=${{ matrix.arch }} BSPLightmapReducer/BSPLightmapReducer.vcxproj
+      
+    - name: Build BSPPlanePatcher
+      working-directory: ${{github.workspace}}
+      shell: cmd
+      run: msbuild /m /p:Configuration=${{ matrix.build_type }} /p:Platform=${{ matrix.arch }} BSPPlanePatcher/BSPPlanePatcher.vcxproj
+      
+
+    - name: Collect files
+      if: ${{ matrix.build_type == 'Release' &&  matrix.arch == 'x64' }}
+      shell: cmd
+      run: |
+        mkdir ${{github.workspace}}\outdir
+        move ${{github.workspace}}\BSPLightmapReducer\x64\Release\*.exe ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPLightmapReducer\x64\Release\*.pdb ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPPlanePatcher\x64\Release\*.exe ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPPlanePatcher\x64\Release\*.pdb ${{github.workspace}}\outdir\
+        
+    - name: Collect files
+      if: ${{ matrix.build_type == 'Release' &&  matrix.arch == 'Win32' }}
+      shell: cmd
+      run: |
+        mkdir ${{github.workspace}}\outdir
+        move ${{github.workspace}}\BSPLightmapReducer\Release\*.exe ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPLightmapReducer\Release\*.pdb ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPPlanePatcher\Release\*.exe ${{github.workspace}}\outdir\
+        move ${{github.workspace}}\BSPPlanePatcher\Release\*.pdb ${{github.workspace}}\outdir\
+
+    - uses: 'actions/upload-artifact@v4'
+      if: ${{ matrix.build_type == 'Release' }}
+      with:
+        name: Windows Package (Portable), ${{ matrix.build_type }}, ${{ matrix.arch }}
+        path: |
+          ${{github.workspace}}/outdir/*.exe
+          ${{github.workspace}}/outdir/*.pdb
+
+    # As actions/upload-release-asset seems to demand exact filenames and content types we use a script instead
+    - name: Upload Release
+      if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs').promises;
+          for ( let filename of await fs.readdir(String.raw`${{github.workspace}}/build/actions/out/`) )
+          {
+            if ( filename.endsWith('.zip') )
+            {
+              await github.rest.repos.uploadReleaseAsset(
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: ${{ github.event.release.id }},
+                  name: filename,
+                  data: await fs.readFile( String.raw`${{github.workspace}}/build/actions/out/` + filename )
+                }
+              );
+            }
+          }
+
+
+
+
+  create-latest:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [vs2022]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+            path: ./artifacts
+
+      - name: Create binary archives
+        run: |
+            ls -l
+            find ./artifacts -type d -mindepth 1 -maxdepth 1 -exec 7z a -r "{}.zip" "{}/*" \;
+
+      - name: Create latest build
+        uses: TomArrow/GH-Automatic-Releases@v1
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: "latest"
+          prerelease: false
+          title: Latest Build
+          files: |
+            artifacts/*.zip
+            

@@ -3,6 +3,8 @@
 // Most of it is likely still the same as in the original Jedi Knight source code releases
 //
 
+typedef struct IUnknown IUnknown;
+
 
 #ifndef DEMOCUT_H
 #define DEMOCUT_H
