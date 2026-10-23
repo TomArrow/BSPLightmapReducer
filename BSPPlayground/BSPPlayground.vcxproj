@@ -24,6 +24,7 @@
     <ProjectGuid>{49EB36F8-0F4C-4FDA-87D9-FAED62136CDE}</ProjectGuid>
     <RootNamespace>BSPPlayground</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
+    <ProjectName>BSPDeluxeMaker</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
